@@ -1,0 +1,219 @@
+Here’s the **clean, stable JSON schema** your `/api/identity-graph` endpoint should emit so the JavaScript graph viewer can render the full identity mesh without guessing.  
+This schema is designed for:
+
+- **Cytoscape.js**  
+- **D3.js**  
+- **Sigma.js**  
+- **Graphology**  
+- **Neo4j browser import**  
+
+…and it supports **plugins**, **connection types**, **weights**, **evidence**, and **node categories**.
+
+---
+
+# 🧩 Identity Mesh Graph — JSON Schema  
+*(This is the canonical shape your backend should output)*
+
+```json
+{
+  "nodes": [
+    {
+      "id": "identity:id_001",
+      "type": "identity",
+      "label": "Identity #1",
+      "confidence": 0.87,
+      "attributes": {
+        "cluster_size": 5,
+        "primary_username": "bradgeiger"
+      }
+    },
+    {
+      "id": "account:github:bradgeiger",
+      "type": "account",
+      "label": "GitHub: bradgeiger",
+      "platform": "github",
+      "attributes": {
+        "username": "bradgeiger",
+        "profile_url": "https://github.com/bradgeiger",
+        "display_name": "Brad Geiger",
+        "bio": "Python dev in Denver",
+        "location": "Denver, CO",
+        "avatar_hash": "abc123"
+      }
+    },
+    {
+      "id": "artifact:email:brad@example.com",
+      "type": "artifact",
+      "label": "brad@example.com",
+      "attributes": {
+        "kind": "email"
+      }
+    },
+    {
+      "id": "source:google:result_123",
+      "type": "source",
+      "label": "Google Result",
+      "attributes": {
+        "url": "https://google.com/search?q=bradgeiger",
+        "rank": 1
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge_001",
+      "source": "identity:id_001",
+      "target": "account:github:bradgeiger",
+      "type": "IDENTITY_HAS_ACCOUNT",
+      "weight": 1.0,
+      "plugin": "identity_resolver",
+      "evidence": {}
+    },
+    {
+      "id": "edge_002",
+      "source": "account:github:bradgeiger",
+      "target": "artifact:email:brad@example.com",
+      "type": "ACCOUNT_USES_EMAIL",
+      "weight": 0.95,
+      "plugin": "email_extractor",
+      "evidence": {
+        "source_url": "https://github.com/bradgeiger",
+        "snippet": "Email: brad@example.com"
+      }
+    },
+    {
+      "id": "edge_003",
+      "source": "account:github:bradgeiger",
+      "target": "account:twitter:brad_geiger",
+      "type": "USERNAME_SIMILARITY",
+      "weight": 0.82,
+      "plugin": "username_similarity",
+      "evidence": {
+        "username_a": "bradgeiger",
+        "username_b": "brad_geiger",
+        "similarity": 0.82
+      }
+    },
+    {
+      "id": "edge_004",
+      "source": "account:github:bradgeiger",
+      "target": "source:google:result_123",
+      "type": "FOUND_IN_SOURCE",
+      "weight": 0.5,
+      "plugin": "google_search_plugin",
+      "evidence": {
+        "query": "bradgeiger",
+        "rank": 1
+      }
+    }
+  ]
+}
+```
+
+---
+
+# 🧠 Schema Breakdown (What Each Field Means)
+
+### **Node fields**
+
+| Field | Meaning |
+|-------|---------|
+| `id` | Unique node ID (`identity:*`, `account:*`, `artifact:*`, `source:*`) |
+| `type` | identity / account / artifact / source |
+| `label` | Human‑readable label for UI |
+| `platform` | For accounts (github, twitter, reddit, etc.) |
+| `confidence` | For identity nodes only |
+| `attributes` | Arbitrary plugin‑generated metadata |
+
+---
+
+### **Edge fields**
+
+| Field | Meaning |
+|-------|---------|
+| `id` | Unique edge ID |
+| `source` | Node ID |
+| `target` | Node ID |
+| `type` | Connection type (USERNAME_SIMILARITY, EMAIL_REUSE, etc.) |
+| `weight` | Strength of connection (0–1) |
+| `plugin` | Which plugin created the edge |
+| `evidence` | URLs, snippets, hashes, similarity scores |
+
+---
+
+# 🧩 Supported Node Types
+
+### **Identity nodes**
+- represent clusters of accounts  
+- have confidence score  
+- connect to accounts via `IDENTITY_HAS_ACCOUNT`
+
+### **Account nodes**
+- represent platform accounts  
+- contain username, profile URL, bio, location, avatar hash, etc.
+
+### **Artifact nodes**
+- email  
+- domain  
+- avatar hash  
+- photo hash  
+- external link  
+- phone fragment  
+- EXIF metadata  
+
+### **Source nodes**
+- search engine results  
+- scraped pages  
+- plugin‑specific sources  
+
+---
+
+# 🔗 Supported Edge Types (Plugin‑Generated)
+
+### Identity edges
+- `IDENTITY_HAS_ACCOUNT`
+
+### Account‑to‑artifact edges
+- `ACCOUNT_USES_EMAIL`
+- `ACCOUNT_LINKS_TO_DOMAIN`
+- `ACCOUNT_HAS_AVATAR_HASH`
+- `ACCOUNT_POSTED_PHOTO_HASH`
+
+### Account‑to‑account edges
+- `USERNAME_SIMILARITY`
+- `BIO_OVERLAP`
+- `LOCATION_MATCH`
+- `EXTERNAL_LINK_REUSE`
+- `SOCIAL_GRAPH_OVERLAP`
+- `CONTENT_REUSE`
+- `CO_OCCURRENCE`
+
+### Account‑to‑source edges
+- `FOUND_IN_SOURCE`
+
+---
+
+# 🎯 What This JSON Schema Enables
+
+Your JavaScript graph viewer can now:
+
+- render the full identity mesh  
+- color nodes by type  
+- color edges by connection type  
+- size edges by weight  
+- show plugin evidence on click  
+- cluster accounts under identities  
+- visualize the “web of identity”  
+
+This is the backbone of a **professional OSINT identity intelligence UI**.
+
+---
+
+If you want, I can now generate:
+
+- **the backend code that produces this JSON**  
+- **the graph plugin system that generates nodes + edges**  
+- **the identity clustering logic**  
+- **the full front‑end graph UI with filters, legends, and search**
+
+Which piece do you want next?
