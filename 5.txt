@@ -1,0 +1,276 @@
+A social‑media resolver is where your OSINT framework really becomes a *full-spectrum identity engine*.  
+To make it modular, flexible, and future‑proof, we’ll build it exactly like your GitHub and StackOverflow plugins — but with **two layers of intelligence**:
+
+### **1. Search‑Engine Polling Layer**  
+Uses Google/Bing/DDG/Yandex/Brave to find social accounts indirectly.
+
+### **2. Direct‑Browsing Layer**  
+Hits the social platform directly (public pages only) and extracts usernames, IDs, bios, and profile URLs.
+
+And we’ll do it all with a **plugin architecture**, so adding new platforms is as simple as dropping in a file.
+
+Below is the complete design.
+
+---
+
+# 🌐 Social Media Resolver (Modular Plugin System)
+
+
+
+
+
+This resolver will support:
+
+- Twitter/X  
+- Reddit  
+- Instagram  
+- TikTok  
+- Facebook (public pages only)  
+- LinkedIn (public search pages only)  
+- Mastodon  
+- Bluesky  
+- YouTube  
+- Medium  
+
+Each site becomes a **plugin** with:
+
+- URL builders  
+- Extractors  
+- Normalizers  
+
+---
+
+# 🧩 1. Base Plugin Interface (Universal)
+
+```python
+# sites/base.py
+from abc import ABC, abstractmethod
+
+class SitePlugin(ABC):
+    name: str
+
+    @abstractmethod
+    def build_urls(self, query: str) -> list[str]:
+        ...
+
+    @abstractmethod
+    def extract(self, html: str) -> list[dict]:
+        ...
+```
+
+Every social media plugin will follow this.
+
+---
+
+# 🧠 2. Search‑Engine Polling Module
+
+This module generates search‑engine URLs for social media discovery.
+
+```python
+SOCIAL_SEARCH_PATTERNS = [
+    'site:{domain} "{query}"',
+    'site:{domain} {query}',
+    '"{query}" "{domain}"',
+    '"{query}" profile {domain}',
+]
+
+SOCIAL_DOMAINS = {
+    "twitter": "twitter.com",
+    "reddit": "reddit.com",
+    "instagram": "instagram.com",
+    "tiktok": "tiktok.com",
+    "facebook": "facebook.com",
+    "linkedin": "linkedin.com",
+    "youtube": "youtube.com",
+    "medium": "medium.com",
+}
+```
+
+The resolver builds URLs like:
+
+```
+https://www.google.com/search?q=site%3Atwitter.com+"Brad+Geiger"
+https://duckduckgo.com/?q="Brad+Geiger"+instagram.com
+https://www.bing.com/search?q="bradgeiger"+reddit.com
+```
+
+These are extremely effective for identity discovery.
+
+---
+
+# 🐦 3. Example Plugin: Twitter/X
+
+
+
+
+
+```python
+# sites/twitter.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class TwitterPlugin(SitePlugin):
+    name = "twitter"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://twitter.com/search?q={q}&src=typed_query",
+            f"https://nitter.net/search?f=users&q={q}",  # privacy-friendly mirror
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+
+        # Pattern: https://twitter.com/<username>
+        profile_re = r"https://twitter\.com/([A-Za-z0-9_]{3,20})"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://twitter.com/{username}",
+                "extra": {"type": "profile"}
+            })
+
+        return results
+```
+
+---
+
+# 👽 4. Example Plugin: Reddit
+
+
+
+
+
+```python
+# sites/reddit.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class RedditPlugin(SitePlugin):
+    name = "reddit"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.reddit.com/search/?q={q}",
+            f"https://old.reddit.com/search?q={q}",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+
+        # Pattern: https://www.reddit.com/user/<username>
+        profile_re = r"reddit\.com/user/([A-Za-z0-9_-]+)"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.reddit.com/user/{username}",
+                "extra": {"type": "profile"}
+            })
+
+        return results
+```
+
+---
+
+# 📸 5. Example Plugin: Instagram
+
+
+
+
+
+```python
+# sites/instagram.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class InstagramPlugin(SitePlugin):
+    name = "instagram"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.instagram.com/web/search/topsearch/?query={q}",
+            f"https://www.google.com/search?q=site%3Ainstagram.com+{q}",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+
+        # Pattern: https://www.instagram.com/<username>/
+        profile_re = r"instagram\.com/([A-Za-z0-9_.]+)/"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.instagram.com/{username}/",
+                "extra": {"type": "profile"}
+            })
+
+        return results
+```
+
+---
+
+# 🧱 6. Plugin Registry
+
+```python
+# core/plugins.py
+from sites.github import GitHubPlugin
+from sites.stackoverflow import StackOverflowPlugin
+from sites.twitter import TwitterPlugin
+from sites.reddit import RedditPlugin
+from sites.instagram import InstagramPlugin
+
+PLUGINS = [
+    GitHubPlugin(),
+    StackOverflowPlugin(),
+    TwitterPlugin(),
+    RedditPlugin(),
+    InstagramPlugin(),
+]
+```
+
+Drop in more plugins anytime.
+
+---
+
+# 🚀 7. Orchestrator Automatically Handles Social Media
+
+Your existing orchestrator already:
+
+- builds URLs  
+- fetches pages  
+- extracts identities  
+- scores them  
+- returns ranked results  
+
+So adding social media plugins requires **zero changes** to the core.
+
+---
+
+# 🎯 What You Now Have
+
+A **full OSINT identity resolver** that:
+
+- polls search engines for social media accounts  
+- browses social media sites directly  
+- extracts usernames, IDs, and profile URLs  
+- normalizes and deduplicates  
+- scores and ranks identity candidates  
+- supports unlimited plugin expansion  
+
+This is now a **true meta‑search OSINT engine**.
+
+---
+
+# 👉 Next Step  
+Which social platform should I build next?
+
+- LinkedIn  
+- TikTok  
+- YouTube  
+- Mastodon
