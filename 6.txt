@@ -1,0 +1,416 @@
+You want **every major social platform** covered — each as a **modular plugin**, each capable of:
+
+- **search‑engine polling** (Google/Bing/DDG/Yandex/Brave)  
+- **direct browsing** (public pages only)  
+- **identity extraction** (usernames, IDs, profile URLs, metadata)  
+- **drop‑in compatibility** with your existing OSINT meta‑resolver  
+
+So below is the **complete plugin suite** for all major platforms.
+
+Each plugin follows the same interface:
+
+```python
+class SitePlugin(ABC):
+    name: str
+    def build_urls(self, query: str) -> list[str]: ...
+    def extract(self, html: str) -> list[dict]: ...
+```
+
+This makes the entire system **plug‑and‑play**.
+
+---
+
+# 🧩 Complete Social Media Plugin Pack  
+*(Twitter/X, Reddit, Instagram, TikTok, Facebook, LinkedIn, YouTube, Mastodon, Bluesky, Medium)*
+
+Each plugin includes:
+
+- **search URLs**  
+- **direct URLs**  
+- **regex‑based extractors**  
+- **normalized identity objects**  
+
+---
+
+# 🐦 Twitter / X Plugin
+
+```python
+# sites/twitter.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class TwitterPlugin(SitePlugin):
+    name = "twitter"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://twitter.com/search?q={q}&src=typed_query",
+            f"https://nitter.net/search?f=users&q={q}",
+            f"https://www.google.com/search?q=site%3Atwitter.com+{q}",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"twitter\.com/([A-Za-z0-9_]{3,20})"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://twitter.com/{username}",
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+# 👽 Reddit Plugin
+
+```python
+# sites/reddit.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class RedditPlugin(SitePlugin):
+    name = "reddit"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.reddit.com/search/?q={q}",
+            f"https://old.reddit.com/search?q={q}",
+            f"https://www.google.com/search?q=site%3Areddit.com+{q}",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"reddit\.com/user/([A-Za-z0-9_-]+)"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.reddit.com/user/{username}",
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+# 📸 Instagram Plugin
+
+```python
+# sites/instagram.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class InstagramPlugin(SitePlugin):
+    name = "instagram"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.instagram.com/web/search/topsearch/?query={q}",
+            f"https://www.google.com/search?q=site%3Ainstagram.com+{q}",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"instagram\.com/([A-Za-z0-9_.]+)/"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.instagram.com/{username}/",
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+# 🎵 TikTok Plugin
+
+```python
+# sites/tiktok.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class TikTokPlugin(SitePlugin):
+    name = "tiktok"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.tiktok.com/search?q={q}",
+            f"https://www.google.com/search?q=site%3Atiktok.com+{q}",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"tiktok\.com/@([A-Za-z0-9_.]+)"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.tiktok.com/@{username}",
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+# 📘 Facebook (Public Pages Only)
+
+```python
+# sites/facebook.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class FacebookPlugin(SitePlugin):
+    name = "facebook"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.google.com/search?q=site%3Afacebook.com+{q}",
+            f"https://www.facebook.com/public/{q}",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"facebook\.com/([A-Za-z0-9.\-]+)/?"
+        for username in set(re.findall(profile_re, html)):
+            if username.lower() in {"pages", "public", "groups"}:
+                continue
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.facebook.com/{username}",
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+# 💼 LinkedIn (Public Search Pages Only)
+
+```python
+# sites/linkedin.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class LinkedInPlugin(SitePlugin):
+    name = "linkedin"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.google.com/search?q=site%3Alinkedin.com+{q}",
+            f"https://www.bing.com/search?q=site%3Alinkedin.com+{q}",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"linkedin\.com/in/([A-Za-z0-9\-]+)/?"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.linkedin.com/in/{username}",
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+# ▶️ YouTube Plugin
+
+```python
+# sites/youtube.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class YouTubePlugin(SitePlugin):
+    name = "youtube"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.youtube.com/results?search_query={q}",
+            f"https://www.google.com/search?q=site%3Ayoutube.com+{q}",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        channel_re = r"youtube\.com/channel/([A-Za-z0-9_-]+)"
+        handle_re = r"youtube\.com/@([A-Za-z0-9_.-]+)"
+
+        for cid in set(re.findall(channel_re, html)):
+            results.append({
+                "username": cid,
+                "profile_url": f"https://www.youtube.com/channel/{cid}",
+                "extra": {"type": "channel_id"}
+            })
+
+        for handle in set(re.findall(handle_re, html)):
+            results.append({
+                "username": handle,
+                "profile_url": f"https://www.youtube.com/@{handle}",
+                "extra": {"type": "handle"}
+            })
+
+        return results
+```
+
+---
+
+# 🐘 Mastodon Plugin
+
+```python
+# sites/mastodon.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class MastodonPlugin(SitePlugin):
+    name = "mastodon"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://mastodon.social/search?q={q}",
+            f"https://www.google.com/search?q={q}+mastodon",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        acct_re = r"@([A-Za-z0-9_]+)@([A-Za-z0-9\.-]+)"
+        for user, server in set(re.findall(acct_re, html)):
+            results.append({
+                "username": f"{user}@{server}",
+                "profile_url": f"https://{server}/@{user}",
+                "extra": {"server": server}
+            })
+        return results
+```
+
+---
+
+# 🌤️ Bluesky Plugin
+
+```python
+# sites/bluesky.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class BlueskyPlugin(SitePlugin):
+    name = "bluesky"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://bsky.app/search?q={q}",
+            f"https://www.google.com/search?q=site%3Absky.app+{q}",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        handle_re = r"bsky\.app/profile/([A-Za-z0-9_.-]+)"
+        for handle in set(re.findall(handle_re, html)):
+            results.append({
+                "username": handle,
+                "profile_url": f"https://bsky.app/profile/{handle}",
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+# ✍️ Medium Plugin
+
+```python
+# sites/medium.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class MediumPlugin(SitePlugin):
+    name = "medium"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://medium.com/search?q={q}",
+            f"https://www.google.com/search?q=site%3Amedium.com+{q}",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"medium\.com/@([A-Za-z0-9_.-]+)"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://medium.com/@{username}",
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+# 🧱 Plugin Registry (All Platforms)
+
+```python
+PLUGINS = [
+    GitHubPlugin(),
+    StackOverflowPlugin(),
+    TwitterPlugin(),
+    RedditPlugin(),
+    InstagramPlugin(),
+    TikTokPlugin(),
+    FacebookPlugin(),
+    LinkedInPlugin(),
+    YouTubePlugin(),
+    MastodonPlugin(),
+    BlueskyPlugin(),
+    MediumPlugin(),
+]
+```
+
+---
+
+# 🎯 You now have a **complete social media OSINT resolver**
+
+It supports:
+
+- **search‑engine discovery**  
+- **direct browsing**  
+- **identity extraction**  
+- **normalization**  
+- **scoring**  
+- **plugin‑based expansion**  
+
+This is now a **full‑spectrum identity intelligence system**.
+
+---
+
+If you want, I can now generate:
+
+- a **unified scoring model** for social media  
+- a **cross‑platform identity correlation engine**  
+- a **graph‑based identity map** (nodes = accounts, edges = signals)  
+- a **CLI tool** or **web dashboard**  
+
+Choose your next step:
+
+- Cross‑platform identity correlation  
+- Graph‑based identity map  
+- Unified scoring engine
