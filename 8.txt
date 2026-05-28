@@ -1,0 +1,133 @@
+You’re thinking like a real investigator now.  
+Cross‑platform identity correlation gets dramatically stronger when you expand beyond the obvious (username, email, display name). The trick is to treat a person’s online presence like a **fingerprint made of many tiny signals** — some explicit, some subtle, some behavioral.
+
+Below is a **deep, modular list of additional similarity categories**, each one something your resolver can score, weight, and use to cluster accounts across platforms.
+
+I’ll break them into **Identity**, **Behavioral**, **Stylistic**, **Technical**, **Social Graph**, and **Metadata** categories — because each category captures a different dimension of a person’s online footprint.
+
+---
+
+# 🧩 Identity‑Level Similarity Categories  
+*(Strongest signals — high confidence)*
+
+- **Real name variants** — Brad Geiger, Bradley Geiger, B. Geiger  
+- **Email fragments** — same local part across platforms  
+- **Phone number fragments**  
+- **Profile photo similarity** — same face, same avatar, same logo  
+- **Bio text reuse** — “Python dev in Denver” appears everywhere  
+- **Location consistency** — Denver → CO → Mountain Time  
+- **External link reuse** — same website, same GitHub link, same LinkedIn link  
+- **Username evolution patterns** — bradgeiger → brad_geiger → geigerbrad  
+
+These are the “anchor” signals that often tie everything together.
+
+---
+
+# 🧠 Behavioral Similarity Categories  
+*(Medium‑strength, but extremely useful)*
+
+- **Posting time patterns** — same active hours across platforms  
+- **Topic affinity** — same interests: Python, AI, gaming, politics  
+- **Hashtag reuse**  
+- **Shared communities** — same subreddits, GitHub orgs, Discords  
+- **Content cadence** — posts every 2–3 days consistently  
+- **Engagement style** — long replies vs. short quips  
+
+Behavioral signals are subtle but powerful when combined.
+
+---
+
+# ✍️ Stylistic / Linguistic Similarity Categories  
+*(High‑value for correlation — people rarely change writing style)*
+
+- **Writing style fingerprint** — punctuation, emoji use, sentence length  
+- **Vocabulary overlap**  
+- **Signature phrases** — “cheers,” “my dude,” “tbh,” etc.  
+- **Emoji patterns**  
+- **Code style** — indentation, naming conventions, comments  
+
+This is the same technique used in authorship attribution research.
+
+---
+
+# 🛠️ Technical Metadata Categories  
+*(Often overlooked — but extremely strong)*
+
+- **Shared IP hints (public only)** — e.g., same region from public logs  
+- **User agent patterns** — same device/browser in public headers  
+- **EXIF metadata** — camera model, GPS, timestamp  
+- **Image hash similarity** — same avatar resized or recolored  
+- **Link shortener reuse** — bit.ly links with same ID pattern  
+
+These are extremely strong when available.
+
+---
+
+# 🕸️ Social Graph Similarity Categories  
+*(Network‑based correlation — very strong)*
+
+- **Mutual follower overlap**  
+- **Shared follows** — same influencers, same orgs  
+- **Cross‑platform friend clusters**  
+- **Co‑appearance in discussions**  
+- **Same niche communities**  
+
+People tend to orbit the same social circles everywhere.
+
+---
+
+# 🔍 Content‑Level Similarity Categories  
+*(Medium‑strength but very common)*
+
+- **Same photos posted across platforms**  
+- **Same memes reposted**  
+- **Same projects referenced**  
+- **Same resume/portfolio details**  
+- **Same writing topics**  
+
+This is especially strong for developers, artists, and influencers.
+
+---
+
+# 🧬 Account Metadata Categories  
+*(Weak individually, strong in combination)*
+
+- **Account creation date proximity**  
+- **Profile theme consistency**  
+- **Color palette reuse**  
+- **Bio formatting style**  
+- **Link formatting habits**  
+
+These are subtle but surprisingly consistent.
+
+---
+
+# 🧩 Putting It All Together  
+Your correlation engine can now score identities using:
+
+- Identity signals  
+- Behavioral signals  
+- Linguistic signals  
+- Technical signals  
+- Social graph signals  
+- Content signals  
+- Metadata signals  
+
+Each category becomes a **weighted feature** in your identity graph.
+
+The more categories match, the higher the confidence.
+
+---
+
+If you want, I can now build:
+
+- **a unified scoring model** that weights all categories  
+- **a graph‑based correlation engine** (NetworkX or Neo4j)  
+- **a visualization layer** (identity clusters, edges, confidence heatmap)  
+- **a plugin‑based similarity evaluator** for each category  
+
+Which direction do you want to expand next:
+
+- Unified scoring model  
+- Graph‑based correlation engine  
+- Identity visualization layer
