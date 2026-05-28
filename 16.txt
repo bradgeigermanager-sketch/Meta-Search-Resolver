@@ -1,0 +1,152 @@
+### Identity mesh graph – JavaScript front end
+
+Here’s a self‑contained HTML+JS snippet that:
+
+- fetches your identity graph from `/api/identity-graph`
+- renders it with Cytoscape
+- colors nodes by type (identity/account/artifact/source)
+- colors edges by connection type
+- shows details on click
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Identity Mesh Graph</title>
+  <!-- Assume cytoscape is loaded globally, e.g. via CDN -->
+  <style>
+    body { font-family: sans-serif; margin: 0; display: flex; height: 100vh; }
+    #cy { flex: 3; height: 100%; border-right: 1px solid #ccc; }
+    #info { flex: 1; padding: 1rem; overflow: auto; }
+    pre { background: #f5f5f5; padding: 0.5rem; }
+  </style>
+</head>
+<body>
+
+<div id="cy"></div>
+<div id="info">
+  <h2>Details</h2>
+  <pre id="details">Click a node or edge.</pre>
+</div>
+
+<script>
+async function loadGraph() {
+  const res = await fetch('/api/identity-graph');
+  const graph = await res.json(); // { nodes: [...], edges: [...] }
+
+  const elements = [];
+
+  graph.nodes.forEach(n => {
+    elements.push({
+      data: {
+        id: n.id,
+        label: n.label,
+        type: n.type,
+        ...n
+      }
+    });
+  });
+
+  graph.edges.forEach(e => {
+    elements.push({
+      data: {
+        id: e.id || `${e.source}-${e.target}-${e.type}`,
+        source: e.source,
+        target: e.target,
+        type: e.type,
+        weight: e.weight,
+        plugin: e.plugin,
+        ...e
+      }
+    });
+  });
+
+  const cy = cytoscape({
+    container: document.getElementById('cy'),
+    elements,
+    layout: { name: 'cose', animate: true },
+    style: [
+      {
+        selector: 'node',
+        style: {
+          'label': 'data(label)',
+          'font-size': 10,
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'width': 30,
+          'height': 30,
+          'background-color': '#888',
+          'color': '#000'
+        }
+      },
+      {
+        selector: 'node[type = "identity"]',
+        style: { 'background-color': '#ff9800', 'shape': 'round-rectangle' }
+      },
+      {
+        selector: 'node[type = "account"]',
+        style: { 'background-color': '#2196f3', 'shape': 'ellipse' }
+      },
+      {
+        selector: 'node[type = "artifact"]',
+        style: { 'background-color': '#4caf50', 'shape': 'diamond' }
+      },
+      {
+        selector: 'node[type = "source"]',
+        style: { 'background-color': '#9c27b0', 'shape': 'hexagon' }
+      },
+      {
+        selector: 'edge',
+        style: {
+          'width': 'mapData(weight, 0, 1, 1, 6)',
+          'line-color': '#bbb',
+          'curve-style': 'bezier',
+          'target-arrow-shape': 'triangle',
+          'target-arrow-color': '#bbb'
+        }
+      },
+      {
+        selector: 'edge[type = "USERNAME_SIMILARITY"]',
+        style: { 'line-color': '#03a9f4', 'target-arrow-color': '#03a9f4' }
+      },
+      {
+        selector: 'edge[type = "EMAIL_REUSE"]',
+        style: { 'line-color': '#e91e63', 'target-arrow-color': '#e91e63' }
+      },
+      {
+        selector: 'edge[type = "EXTERNAL_LINK"]',
+        style: { 'line-color': '#8bc34a', 'target-arrow-color': '#8bc34a' }
+      }
+    ]
+  });
+
+  const detailsEl = document.getElementById('details');
+
+  cy.on('tap', 'node', evt => {
+    const d = evt.target.data();
+    detailsEl.textContent = JSON.stringify(
+      { id: d.id, type: d.type, label: d.label, ...d },
+      null,
+      2
+    );
+  });
+
+  cy.on('tap', 'edge', evt => {
+    const d = evt.target.data();
+    detailsEl.textContent = JSON.stringify(
+      { type: d.type, weight: d.weight, plugin: d.plugin, ...d },
+      null,
+      2
+    );
+  });
+}
+
+loadGraph();
+</script>
+
+</body>
+</html>
+```
+
+If you want, next we can define the exact JSON shape your `/api/identity-graph` endpoint should emit so this plugs in cleanly.
