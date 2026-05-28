@@ -1,0 +1,305 @@
+Here’s the **backend code that actually *builds* the identity‑mesh JSON**, using your:
+
+- **site plugins** (produce accounts + artifacts)  
+- **graph plugins** (produce edges)  
+- **identity resolver** (clusters accounts into identities)  
+
+This is the **canonical implementation** that produces the JSON schema your JavaScript graph viewer expects.
+
+I’ll give you:
+
+1. **Data models**  
+2. **Graph builder**  
+3. **Identity clustering**  
+4. **JSON serializer**  
+5. **API endpoint**  
+
+Everything is modular and plugin‑driven.
+
+---
+
+# 🧩 1. Data Models (Nodes + Edges)
+
+```python
+# core/graph_model.py
+from dataclasses import dataclass, field
+from typing import Dict, Any
+
+@dataclass
+class Node:
+    id: str
+    type: str
+    label: str
+    attributes: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class Edge:
+    id: str
+    source: str
+    target: str
+    type: str
+    weight: float
+    plugin: str
+    evidence: Dict[str, Any] = field(default_factory=dict)
+```
+
+---
+
+# 🧠 2. Graph Builder (Collects Nodes + Edges From Plugins)
+
+```python
+# core/graph_builder.py
+import uuid
+from core.graph_model import Node, Edge
+
+class IdentityGraph:
+    def __init__(self):
+        self.nodes = {}
+        self.edges = []
+
+    def add_node(self, node: Node):
+        self.nodes[node.id] = node
+
+    def add_edge(self, edge: Edge):
+        self.edges.append(edge)
+
+    def to_json(self):
+        return {
+            "nodes": [vars(n) for n in self.nodes.values()],
+            "edges": [vars(e) for e in self.edges]
+        }
+```
+
+---
+
+# 🧩 3. Build Account + Artifact Nodes From Site Plugins
+
+```python
+# core/build_accounts.py
+def build_account_nodes(site_plugins, query):
+    accounts = []
+
+    for plugin in site_plugins:
+        urls = plugin.build_urls(query)
+        for url in urls:
+            html = fetch(url)  # your fetcher
+            results = plugin.extract(html)
+
+            for r in results:
+                node_id = f"account:{plugin.name}:{r['username']}"
+                accounts.append({
+                    "node_id": node_id,
+                    "plugin": plugin.name,
+                    **r
+                })
+
+    return accounts
+```
+
+---
+
+# 🧬 4. Build Artifact Nodes (Emails, Domains, Avatars, etc.)
+
+```python
+# core/build_artifacts.py
+import re
+
+def extract_artifacts_from_account(account):
+    artifacts = []
+
+    # email
+    if account.get("email"):
+        artifacts.append({
+            "id": f"artifact:email:{account['email']}",
+            "type": "artifact",
+            "label": account["email"],
+            "attributes": {"kind": "email"}
+        })
+
+    # avatar hash
+    if account.get("avatar_hash"):
+        artifacts.append({
+            "id": f"artifact:avatar:{account['avatar_hash']}",
+            "type": "artifact",
+            "label": f"Avatar Hash {account['avatar_hash']}",
+            "attributes": {"kind": "avatar_hash"}
+        })
+
+    # external links
+    for link in account.get("links", []):
+        artifacts.append({
+            "id": f"artifact:link:{link}",
+            "type": "artifact",
+            "label": link,
+            "attributes": {"kind": "external_link"}
+        })
+
+    return artifacts
+```
+
+---
+
+# 🧩 5. Graph Plugins Generate Edges
+
+```python
+# core/run_graph_plugins.py
+def build_graph_edges(graph_plugins, accounts, artifacts):
+    edges = []
+
+    for plugin in graph_plugins:
+        plugin_edges = plugin.build_edges(accounts, artifacts)
+        for e in plugin_edges:
+            e.id = e.id or str(uuid.uuid4())
+            edges.append(e)
+
+    return edges
+```
+
+---
+
+# 🧠 6. Identity Clustering (Connected Components)
+
+```python
+# core/identity_cluster.py
+import networkx as nx
+
+def cluster_identities(edges):
+    G = nx.Graph()
+
+    for e in edges:
+        G.add_edge(e.source, e.target, weight=e.weight)
+
+    clusters = []
+    for comp in nx.connected_components(G):
+        clusters.append(list(comp))
+
+    return clusters
+```
+
+---
+
+# 🧩 7. Build Identity Nodes
+
+```python
+# core/build_identity_nodes.py
+def build_identity_nodes(graph, clusters):
+    for idx, cluster in enumerate(clusters):
+        identity_id = f"identity:id_{idx+1}"
+
+        graph.add_node(Node(
+            id=identity_id,
+            type="identity",
+            label=f"Identity #{idx+1}",
+            attributes={"cluster_size": len(cluster)}
+        ))
+
+        for node_id in cluster:
+            graph.add_edge(Edge(
+                id=str(uuid.uuid4()),
+                source=identity_id,
+                target=node_id,
+                type="IDENTITY_HAS_ACCOUNT",
+                weight=1.0,
+                plugin="identity_resolver",
+                evidence={}
+            ))
+```
+
+---
+
+# 🧩 8. Full Pipeline to Build the JSON Graph
+
+```python
+# core/build_identity_graph.py
+from core.graph_builder import IdentityGraph
+from core.build_accounts import build_account_nodes
+from core.build_artifacts import extract_artifacts_from_account
+from core.run_graph_plugins import build_graph_edges
+from core.identity_cluster import cluster_identities
+from core.build_identity_nodes import build_identity_nodes
+
+def build_identity_graph(query, site_plugins, graph_plugins):
+    graph = IdentityGraph()
+
+    # 1. Collect accounts
+    accounts = build_account_nodes(site_plugins, query)
+
+    # 2. Add account nodes
+    for a in accounts:
+        graph.add_node(Node(
+            id=a["node_id"],
+            type="account",
+            label=f"{a['plugin']}:{a['username']}",
+            attributes=a
+        ))
+
+    # 3. Collect artifacts
+    artifacts = []
+    for a in accounts:
+        artifacts.extend(extract_artifacts_from_account(a))
+
+    # 4. Add artifact nodes
+    for art in artifacts:
+        graph.add_node(Node(**art))
+
+    # 5. Build edges from graph plugins
+    edges = build_graph_edges(graph_plugins, accounts, artifacts)
+    for e in edges:
+        graph.add_edge(e)
+
+    # 6. Cluster identities
+    clusters = cluster_identities(edges)
+
+    # 7. Add identity nodes + edges
+    build_identity_nodes(graph, clusters)
+
+    return graph.to_json()
+```
+
+---
+
+# 🧩 9. API Endpoint
+
+```python
+# api/identity_graph.py
+from core.build_identity_graph import build_identity_graph
+from core.plugin_loader import load_all_plugins
+
+def identity_graph_endpoint(request):
+    query = request.args.get("q")
+
+    plugins = load_all_plugins()
+    site_plugins = plugins["sites"]
+    graph_plugins = plugins["graph"]
+
+    graph_json = build_identity_graph(query, site_plugins, graph_plugins)
+    return json_response(graph_json)
+```
+
+---
+
+# 🎯 What You Now Have
+
+You now have the **full backend pipeline** that:
+
+- runs site plugins  
+- extracts accounts  
+- extracts artifacts  
+- runs graph plugins  
+- builds edges  
+- clusters identities  
+- builds identity nodes  
+- outputs the exact JSON schema your JS viewer expects  
+
+This is the complete engine behind a **professional OSINT identity‑mesh system**.
+
+---
+
+If you want, I can now generate:
+
+- **Graph plugins for every connection type**  
+- **A full Cytoscape.js UI with filters, legends, and search**  
+- **A Neo4j export pipeline**  
+- **A real‑time streaming graph (WebSockets)**  
+
+Which one do you want next?
