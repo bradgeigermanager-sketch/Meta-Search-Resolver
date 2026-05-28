@@ -1,0 +1,256 @@
+A plugin system without a **manifest layer** is like a city without zoning — everything technically works, but nothing is organized, nothing is discoverable, and nothing is controllable.  
+A **Plugin Manifest System** gives your OSINT framework structure, safety, versioning, and selective enable/disable control.
+
+Below is a complete, production‑grade manifest system that works with your **dynamic plugin loader**, supports **site plugins**, **similarity plugins**, and future plugin types.
+
+---
+
+# 🔌 Plugin Manifest System  
+*(Declarative, extensible, hot‑swappable)*
+
+A manifest is a small metadata file that sits next to each plugin and describes:
+
+- plugin name  
+- version  
+- author  
+- description  
+- category  
+- dependencies  
+- enabled/disabled state  
+- weight (for similarity plugins)  
+- permissions (optional)  
+
+This allows your system to load plugins **intelligently**, not blindly.
+
+---
+
+# 📁 1. Directory Structure With Manifests
+
+```
+plugins/
+│
+├── sites/
+│   ├── github.py
+│   ├── github.manifest.json
+│   ├── twitter.py
+│   ├── twitter.manifest.json
+│   └── ...
+│
+├── similarity/
+│   ├── username_similarity.py
+│   ├── username_similarity.manifest.json
+│   ├── bio_overlap.py
+│   ├── bio_overlap.manifest.json
+│   └── ...
+```
+
+Each plugin has a matching `.manifest.json`.
+
+---
+
+# 🧩 2. Example Manifest (GitHub Site Plugin)
+
+```json
+{
+  "name": "github",
+  "type": "site",
+  "version": "1.0.0",
+  "enabled": true,
+  "author": "OSINT Framework",
+  "description": "Resolves GitHub profiles, repos, commits, and gists.",
+  "permissions": {
+    "network": true
+  }
+}
+```
+
+---
+
+# 🧬 3. Example Manifest (Username Similarity Plugin)
+
+```json
+{
+  "name": "username_similarity",
+  "type": "similarity",
+  "version": "1.1.0",
+  "enabled": true,
+  "weight": 0.30,
+  "author": "OSINT Framework",
+  "description": "Fuzzy‑matches usernames across platforms.",
+  "dependencies": [],
+  "permissions": {
+    "compute_intensive": false
+  }
+}
+```
+
+---
+
+# ⚙️ 4. Manifest Loader
+
+This loader reads the manifest file **before** loading the plugin class.
+
+```python
+# core/manifest_loader.py
+import json
+import os
+
+def load_manifest(plugin_path: str):
+    base = plugin_path.replace(".py", "")
+    manifest_path = base + ".manifest.json"
+
+    if not os.path.exists(manifest_path):
+        return None
+
+    with open(manifest_path, "r") as f:
+        return json.load(f)
+```
+
+---
+
+# 🔍 5. Integrating Manifests Into the Dynamic Plugin Loader
+
+Modify your loader so it:
+
+1. Finds plugin file  
+2. Loads manifest  
+3. Skips plugin if `enabled: false`  
+4. Instantiates plugin class  
+5. Attaches manifest metadata to the plugin instance  
+
+```python
+# core/plugin_loader.py
+import importlib
+import pkgutil
+import inspect
+from plugins.base import SitePlugin, SimilarityPlugin
+from core.manifest_loader import load_manifest
+
+def load_plugins(package_path: str, base_class):
+    plugins = []
+    package = importlib.import_module(package_path)
+
+    for _, module_name, _ in pkgutil.iter_modules(package.__path__):
+        module_path = f"{package_path}.{module_name}"
+        module = importlib.import_module(module_path)
+
+        manifest = load_manifest(module.__file__)
+        if manifest and not manifest.get("enabled", True):
+            continue  # skip disabled plugin
+
+        for _, obj in inspect.getmembers(module, inspect.isclass):
+            if issubclass(obj, base_class) and obj is not base_class:
+                instance = obj()
+                instance.manifest = manifest or {}
+                plugins.append(instance)
+
+    return plugins
+```
+
+---
+
+# 🧱 6. Using Manifest Metadata in the System
+
+### ✔ Enable/disable plugins  
+Your orchestrator now respects manifest flags.
+
+### ✔ Weighted similarity scoring  
+Similarity plugins can define:
+
+```json
+"weight": 0.25
+```
+
+Your scoring engine can read:
+
+```python
+weight = plugin.manifest.get("weight", 0.1)
+```
+
+### ✔ Versioning  
+You can warn if a plugin is outdated.
+
+### ✔ Permissions  
+You can enforce:
+
+- network access  
+- compute‑intensive operations  
+- file access  
+
+### ✔ Dependencies  
+You can ensure required libraries are installed.
+
+---
+
+# 🔥 7. Hot‑Reloading Manifests
+
+You can reload manifests without restarting the system:
+
+```python
+def reload_manifests(plugins):
+    for plugin in plugins:
+        manifest = load_manifest(plugin.__class__.__module__)
+        if manifest:
+            plugin.manifest = manifest
+```
+
+This allows:
+
+- enabling/disabling plugins live  
+- adjusting weights  
+- updating descriptions  
+- changing permissions  
+
+---
+
+# 🧠 8. Example: Disabling a Plugin
+
+Edit:
+
+```
+plugins/similarity/bio_overlap.manifest.json
+```
+
+Change:
+
+```json
+"enabled": false
+```
+
+Your system immediately stops loading it.
+
+No code changes.  
+No restart.  
+No rebuild.
+
+---
+
+# 🎯 What You Now Have
+
+A **full plugin manifest system** that gives you:
+
+- selective enable/disable  
+- versioning  
+- metadata  
+- permissions  
+- weights  
+- dependencies  
+- hot‑reloading  
+- clean organization  
+
+This is the backbone of a **professional OSINT framework**.
+
+---
+
+If you want, I can now build:
+
+- **a plugin manager UI** (enable/disable plugins in browser)  
+- **a plugin dependency resolver**  
+- **a plugin sandbox** (safe execution)  
+- **a plugin signing/verification system**  
+
+Choose your next upgrade:
+
+- Plugin manager UI  
+- Dependency resolver  
+- Plugin sandbox
