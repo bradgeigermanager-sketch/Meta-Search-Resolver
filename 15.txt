@@ -1,0 +1,180 @@
+You’re basically asking for a **living map of a person’s online universe**—accounts, sites, signals, and all the threads between them—driven by plugins.
+
+Let’s design exactly that:  
+a **graph-based identity mesh**, where:
+
+- nodes = identities, accounts, artifacts, sources  
+- edges = connection types (username match, email reuse, shared avatar, same bio, etc.)  
+- plugins = generators of edges and nodes
+
+---
+
+### 1. Core graph model
+
+**Node types:**
+
+- **Identity:** inferred cluster (e.g. `id_001`)  
+- **Account:** `github:bradgeiger`, `twitter:brad_geiger`  
+- **Artifact:** email, domain, avatar hash, photo, repo, blog, etc.  
+- **Source:** where we saw it (GitHub, Reddit, LinkedIn, Google result, etc.)
+
+**Edge types (examples):**
+
+- `IDENTITY_HAS_ACCOUNT`  
+- `ACCOUNT_USES_EMAIL`  
+- `ACCOUNT_HAS_AVATAR_HASH`  
+- `ACCOUNT_MENTIONS_DOMAIN`  
+- `ACCOUNT_SHARES_BIO_TEXT_WITH`  
+- `ACCOUNT_FOLLOWS_ACCOUNT`  
+- `ACCOUNT_CO_OCCURS_WITH_ACCOUNT`  
+- `ACCOUNT_LINKED_FROM_SOURCE`  
+
+Each edge has:
+
+- `type`  
+- `weight` (strength)  
+- `plugin` (who created it)  
+- `evidence` (URLs, snippets)
+
+---
+
+### 2. Plugin types for the identity mesh
+
+You already have:
+
+- **Site plugins** → create *account* nodes + basic edges  
+- **Similarity plugins** → compute *scores* between accounts  
+
+Now add **graph plugins**, each responsible for a *connection type*:
+
+- **UsernameMatchPlugin** → edges between accounts with similar usernames  
+- **EmailReusePlugin** → edges between accounts sharing email  
+- **AvatarHashPlugin** → edges via same image hash  
+- **BioOverlapPlugin** → edges via similar bios  
+- **LocationMatchPlugin** → edges via same location  
+- **ExternalLinkPlugin** → edges via same website / domain  
+- **SocialGraphPlugin** → edges via mutual follows / shared friends  
+- **ContentReusePlugin** → edges via same photo/meme/text  
+
+Each plugin:
+
+```python
+class GraphPlugin(ABC):
+    name: str
+
+    @abstractmethod
+    def build_edges(self, accounts, artifacts) -> list[Edge]:
+        ...
+```
+
+---
+
+### 3. Edge object
+
+```python
+@dataclass
+class Edge:
+    src: str        # node id
+    dst: str        # node id
+    type: str       # e.g. "USERNAME_SIMILARITY"
+    weight: float   # 0–1
+    plugin: str     # plugin name
+    evidence: dict  # URLs, snippets, hashes, etc.
+```
+
+Node IDs can be like:
+
+- `account:github:bradgeiger`  
+- `account:twitter:brad_geiger`  
+- `artifact:email:brad@example.com`  
+- `artifact:avatar:hash:abc123`  
+- `source:google:result:xyz`  
+
+---
+
+### 4. Example graph plugin: username similarity
+
+```python
+class UsernameGraphPlugin(GraphPlugin):
+    name = "username_graph"
+
+    def build_edges(self, accounts, artifacts):
+        edges = []
+        for i, a in enumerate(accounts):
+            for j in range(i+1, len(accounts)):
+                b = accounts[j]
+                sim = username_similarity(a.username, b.username)
+                if sim >= 0.7:
+                    edges.append(Edge(
+                        src=a.node_id,
+                        dst=b.node_id,
+                        type="USERNAME_SIMILARITY",
+                        weight=sim,
+                        plugin=self.name,
+                        evidence={"username_a": a.username, "username_b": b.username}
+                    ))
+        return edges
+```
+
+---
+
+### 5. Building the mesh
+
+Pipeline:
+
+1. **Collect accounts** from all site plugins.  
+2. **Collect artifacts** (emails, domains, avatars, etc.).  
+3. Run all **graph plugins** → get edges.  
+4. Build a graph (e.g. NetworkX).  
+5. Run **community detection / connected components** → identities.  
+6. Attach each account node to an identity node with `IDENTITY_HAS_ACCOUNT` edges.
+
+---
+
+### 6. Visualizing the web of identity
+
+You can expose the graph as JSON for a front‑end (Cytoscape.js, D3, etc.):
+
+```json
+{
+  "nodes": [
+    { "id": "identity:id_1", "type": "identity", "label": "Identity #1" },
+    { "id": "account:github:bradgeiger", "type": "account", "label": "GitHub: bradgeiger" },
+    { "id": "account:twitter:brad_geiger", "type": "account", "label": "Twitter: brad_geiger" },
+    { "id": "artifact:email:brad@example.com", "type": "artifact", "label": "brad@example.com" }
+  ],
+  "edges": [
+    { "source": "identity:id_1", "target": "account:github:bradgeiger", "type": "IDENTITY_HAS_ACCOUNT" },
+    { "source": "identity:id_1", "target": "account:twitter:brad_geiger", "type": "IDENTITY_HAS_ACCOUNT" },
+    { "source": "account:github:bradgeiger", "target": "artifact:email:brad@example.com", "type": "ACCOUNT_USES_EMAIL" },
+    { "source": "account:twitter:brad_geiger", "target": "artifact:email:brad@example.com", "type": "ACCOUNT_USES_EMAIL" }
+  ]
+}
+```
+
+Front‑end can show:
+
+- central identity node  
+- spokes for accounts  
+- artifacts as shared hubs  
+- edge colors by plugin/connection type  
+- edge thickness by weight
+
+---
+
+### 7. Plugin mesh: “types of connection” as first‑class citizens
+
+You now have **plugins for each connection type**, not just each site:
+
+- Site plugins → create nodes  
+- Similarity plugins → score pairs  
+- Graph plugins → create edges  
+- Identity resolver → cluster graph into identities  
+
+That’s your **mesh / web of identity**.
+
+If you want, next we can design:
+
+- a **weighting model** for edge types  
+- a **graph API** (query: “show all accounts linked to this identity via email”)  
+- or a **Cytoscape.js front‑end** specifically for this identity mesh.
