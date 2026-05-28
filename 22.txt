@@ -1,0 +1,627 @@
+### Unique‑ID extraction plugin pack
+
+Below are upgraded versions of each **site plugin** with **unique‑ID extraction** wired in.  
+Each plugin now fills `identifiers` on the returned account objects.
+
+Assumes:
+
+- `Account` has `identifiers: Dict[str, str]`
+- You still wrap these dicts into `Account` later (as in your existing pipeline).
+
+---
+
+#### GitHub unique‑ID extraction
+
+```python
+# plugins/sites/github.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class GitHubPlugin(SitePlugin):
+    name = "github"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://github.com/search?q={q}&type=users",
+            f"https://www.google.com/search?q=site%3Agithub.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        user_re = r"github\.com/([A-Za-z0-9_-]+)"
+        id_re = r'data-hovercard-user-id="(\d+)"'
+
+        usernames = set(re.findall(user_re, html))
+        ids = re.findall(id_re, html)
+
+        # naive pairing: same order; you can improve with better parsing
+        id_iter = iter(ids)
+
+        for username in usernames:
+            user_id = next(id_iter, None)
+            identifiers = {}
+            if user_id:
+                identifiers["user_id"] = user_id
+
+            results.append({
+                "username": username,
+                "profile_url": f"https://github.com/{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "identifiers": identifiers,
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+#### StackOverflow unique‑ID extraction
+
+```python
+# plugins/sites/stackoverflow.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class StackOverflowPlugin(SitePlugin):
+    name = "stackoverflow"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://stackoverflow.com/users/filter?search={q}",
+            f"https://www.google.com/search?q=site%3Astackoverflow.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        user_re = r"stackoverflow\.com/users/(\d+)/([A-Za-z0-9_-]+)"
+
+        for uid, slug in set(re.findall(user_re, html)):
+            identifiers = {"user_id": uid}
+            results.append({
+                "username": slug,
+                "profile_url": f"https://stackoverflow.com/users/{uid}/{slug}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "identifiers": identifiers,
+                "extra": {"user_id": uid}
+            })
+        return results
+```
+
+---
+
+#### Twitter / X unique‑ID extraction
+
+```python
+# plugins/sites/twitter.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class TwitterPlugin(SitePlugin):
+    name = "twitter"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://twitter.com/search?q={q}&src=typed_query",
+            f"https://nitter.net/search?f=users&q={q}",
+            f"https://www.google.com/search?q=site%3Atwitter.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"twitter\.com/([A-Za-z0-9_]{3,20})"
+        rest_id_re = r'"rest_id":"(\d+)"'
+
+        usernames = set(re.findall(profile_re, html))
+        rest_ids = re.findall(rest_id_re, html)
+        id_iter = iter(rest_ids)
+
+        for username in usernames:
+            rest_id = next(id_iter, None)
+            identifiers = {}
+            if rest_id:
+                identifiers["rest_id"] = rest_id
+
+            results.append({
+                "username": username,
+                "profile_url": f"https://twitter.com/{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "identifiers": identifiers,
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+#### Reddit unique‑ID extraction
+
+```python
+# plugins/sites/reddit.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class RedditPlugin(SitePlugin):
+    name = "reddit"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.reddit.com/search/?q={q}",
+            f"https://old.reddit.com/search?q={q}",
+            f"https://www.google.com/search?q=site%3Areddit.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"reddit\.com/user/([A-Za-z0-9_-]+)"
+        id_re = r'"id":"(t2_[A-Za-z0-9]+)"'
+
+        usernames = set(re.findall(profile_re, html))
+        ids = re.findall(id_re, html)
+        id_iter = iter(ids)
+
+        for username in usernames:
+            user_id = next(id_iter, None)
+            identifiers = {}
+            if user_id:
+                identifiers["user_id"] = user_id
+
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.reddit.com/user/{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "identifiers": identifiers,
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+#### Instagram unique‑ID extraction
+
+```python
+# plugins/sites/instagram.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class InstagramPlugin(SitePlugin):
+    name = "instagram"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.instagram.com/web/search/topsearch/?query={q}",
+            f"https://www.google.com/search?q=site%3Ainstagram.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"instagram\.com/([A-Za-z0-9_.]+)/"
+        pk_re = r'"pk":(\d+)'
+
+        usernames = set(re.findall(profile_re, html))
+        pks = re.findall(pk_re, html)
+        pk_iter = iter(pks)
+
+        for username in usernames:
+            pk = next(pk_iter, None)
+            identifiers = {}
+            if pk:
+                identifiers["pk"] = pk
+
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.instagram.com/{username}/",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "identifiers": identifiers,
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+#### TikTok unique‑ID extraction
+
+```python
+# plugins/sites/tiktok.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class TikTokPlugin(SitePlugin):
+    name = "tiktok"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.tiktok.com/search?q={q}",
+            f"https://www.google.com/search?q=site%3Atiktok.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"tiktok\.com/@([A-Za-z0-9_.]+)"
+        secuid_re = r'"secUid":"([^"]+)"'
+
+        usernames = set(re.findall(profile_re, html))
+        secuids = re.findall(secuid_re, html)
+        sec_iter = iter(secuids)
+
+        for username in usernames:
+            sec_uid = next(sec_iter, None)
+            identifiers = {}
+            if sec_uid:
+                identifiers["sec_uid"] = sec_uid
+
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.tiktok.com/@{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "identifiers": identifiers,
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+#### Facebook unique‑ID extraction
+
+```python
+# plugins/sites/facebook.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class FacebookPlugin(SitePlugin):
+    name = "facebook"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.google.com/search?q=site%3Afacebook.com+{q}",
+            f"https://www.facebook.com/public/{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"facebook\.com/([A-Za-z0-9.\-]+)/?"
+        id_re = r'"entity_id":"(\d+)"'
+
+        usernames = set(re.findall(profile_re, html))
+        ids = re.findall(id_re, html)
+        id_iter = iter(ids)
+
+        for username in usernames:
+            if username.lower() in {"pages", "public", "groups"}:
+                continue
+            profile_id = next(id_iter, None)
+            identifiers = {}
+            if profile_id:
+                identifiers["profile_id"] = profile_id
+
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.facebook.com/{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "identifiers": identifiers,
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+#### LinkedIn unique‑ID extraction
+
+```python
+# plugins/sites/linkedin.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class LinkedInPlugin(SitePlugin):
+    name = "linkedin"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.google.com/search?q=site%3Alinkedin.com+{q}",
+            f"https://www.bing.com/search?q=site%3Alinkedin.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"linkedin\.com/in/([A-Za-z0-9\-]+)/?"
+        urn_re = r'"urn:li:fs_miniProfile:(\d+)"'
+
+        usernames = set(re.findall(profile_re, html))
+        urns = re.findall(urn_re, html)
+        urn_iter = iter(urns)
+
+        for username in usernames:
+            urn = next(urn_iter, None)
+            identifiers = {}
+            if urn:
+                identifiers["urn"] = f"urn:li:fs_miniProfile:{urn}"
+
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.linkedin.com/in/{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "identifiers": identifiers,
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+#### YouTube unique‑ID extraction
+
+```python
+# plugins/sites/youtube.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class YouTubePlugin(SitePlugin):
+    name = "youtube"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.youtube.com/results?search_query={q}",
+            f"https://www.google.com/search?q=site%3Ayoutube.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        channel_re = r"youtube\.com/channel/([A-Za-z0-9_-]+)"
+        handle_re = r"youtube\.com/@([A-Za-z0-9_.-]+)"
+        chanid_re = r'"channelId":"([^"]+)"'
+
+        channel_ids = set(re.findall(channel_re, html))
+        handles = set(re.findall(handle_re, html))
+        chan_ids = re.findall(chanid_re, html)
+        chan_iter = iter(chan_ids)
+
+        for cid in channel_ids:
+            channel_id = next(chan_iter, None)
+            identifiers = {}
+            if channel_id:
+                identifiers["channel_id"] = channel_id
+
+            results.append({
+                "username": cid,
+                "profile_url": f"https://www.youtube.com/channel/{cid}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "identifiers": identifiers,
+                "extra": {"type": "channel_id"}
+            })
+
+        for handle in handles:
+            channel_id = next(chan_iter, None)
+            identifiers = {}
+            if channel_id:
+                identifiers["channel_id"] = channel_id
+
+            results.append({
+                "username": handle,
+                "profile_url": f"https://www.youtube.com/@{handle}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "identifiers": identifiers,
+                "extra": {"type": "handle"}
+            })
+
+        return results
+```
+
+---
+
+#### Mastodon unique‑ID extraction
+
+```python
+# plugins/sites/mastodon.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class MastodonPlugin(SitePlugin):
+    name = "mastodon"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://mastodon.social/search?q={q}",
+            f"https://www.google.com/search?q={q}+mastodon"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        acct_re = r"@([A-Za-z0-9_]+)@([A-Za-z0-9\.-]+)"
+
+        for user, server in set(re.findall(acct_re, html)):
+            acct = f"{user}@{server}"
+            identifiers = {"acct": acct}
+            results.append({
+                "username": acct,
+                "profile_url": f"https://{server}/@{user}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "identifiers": identifiers,
+                "extra": {"server": server}
+            })
+        return results
+```
+
+---
+
+#### Bluesky unique‑ID extraction
+
+```python
+# plugins/sites/bluesky.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class BlueskyPlugin(SitePlugin):
+    name = "bluesky"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://bsky.app/search?q={q}",
+            f"https://www.google.com/search?q=site%3Absky.app+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        handle_re = r"bsky\.app/profile/([A-Za-z0-9_.-]+)"
+        did_re = r'"did:plc:[A-Za-z0-9]+"'
+
+        handles = set(re.findall(handle_re, html))
+        dids = re.findall(did_re, html)
+        did_iter = iter(dids)
+
+        for handle in handles:
+            did = next(did_iter, None)
+            identifiers = {}
+            if did:
+                identifiers["did"] = did
+
+            results.append({
+                "username": handle,
+                "profile_url": f"https://bsky.app/profile/{handle}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "identifiers": identifiers,
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+#### Medium unique‑ID extraction
+
+```python
+# plugins/sites/medium.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class MediumPlugin(SitePlugin):
+    name = "medium"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://medium.com/search?q={q}",
+            f"https://www.google.com/search?q=site%3Amedium.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"medium\.com/@([A-Za-z0-9_.-]+)"
+        uid_re = r'"userId":"([A-Za-z0-9]+)"'
+
+        usernames = set(re.findall(profile_re, html))
+        uids = re.findall(uid_re, html)
+        uid_iter = iter(uids)
+
+        for username in usernames:
+            user_id = next(uid_iter, None)
+            identifiers = {}
+            if user_id:
+                identifiers["user_id"] = user_id
+
+            results.append({
+                "username": username,
+                "profile_url": f"https://medium.com/@{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "identifiers": identifiers,
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+If you want, next we can:
+
+- turn these identifiers into **artifact nodes + edges** in the graph, and  
+- wire a **UniqueIDGraphPlugin** + **UniqueIDSimilarityPlugin** that treat shared IDs as near‑certain identity matches.
