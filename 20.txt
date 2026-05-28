@@ -1,0 +1,279 @@
+Baymont, this is the right instinct.  
+Once an identity is inferred, the **URLs tied to that identity become the backbone** of the entire OSINT mesh. They’re the anchors that every plugin, every similarity signal, and every graph edge ultimately revolves around.
+
+Right now, your system *discovers* URLs through site plugins and search plugins — but it doesn’t yet have a **canonical, normalized, identity‑centric URL registry**.
+
+Let’s fix that.
+
+Below is the improved, production‑grade route for storing, normalizing, and exposing URLs for each identity. This becomes the **core foundation** of your identity mapping.
+
+---
+
+## 🔗 The Identity URL Registry (IUR)
+Every identity gets a dedicated structure:
+
+```json
+{
+  "identity_id": "id_001",
+  "urls": {
+    "accounts": {
+      "github": "https://github.com/bradgeiger",
+      "twitter": "https://twitter.com/brad_geiger",
+      "reddit": "https://www.reddit.com/user/bradgeiger"
+    },
+    "artifacts": {
+      "email": ["mailto:brad@example.com"],
+      "domains": ["https://bradgeiger.dev"],
+      "avatars": ["https://avatars.githubusercontent.com/u/12345"]
+    },
+    "sources": {
+      "google": ["https://google.com/search?q=bradgeiger"],
+      "bing": ["https://bing.com/search?q=bradgeiger"]
+    },
+    "evidence": {
+      "profile_links": [
+        "https://github.com/bradgeiger",
+        "https://twitter.com/brad_geiger"
+      ],
+      "mentions": [
+        "https://medium.com/@bradgeiger",
+        "https://stackoverflow.com/users/12345/bradgeiger"
+      ]
+    }
+  }
+}
+```
+
+This registry is **identity‑centric**, not plugin‑centric.
+
+---
+
+## 🧠 Why this matters
+Once URLs are normalized and tied to an identity:
+
+- Graph plugins can reference them directly  
+- Similarity plugins can use them as evidence  
+- The UI can show “all known URLs for this identity”  
+- You can export the identity as a portable OSINT object  
+- You can re‑crawl or enrich the identity later  
+- You can detect new accounts by URL patterns  
+
+This is the **spine** of the entire system.
+
+---
+
+## 🧩 Step 1 — Normalize URLs from all plugins
+Every site plugin should output **canonical URLs**.
+
+Example normalization function:
+
+```python
+def normalize_url(url: str) -> str:
+    url = url.strip()
+    url = url.replace("http://", "https://")
+    if url.endswith("/"):
+        url = url[:-1]
+    return url
+```
+
+Every plugin runs:
+
+```python
+profile_url = normalize_url(profile_url)
+```
+
+---
+
+## 🧩 Step 2 — Store URLs inside the Account object
+
+```python
+@dataclass
+class Account:
+    node_id: str
+    source: str
+    username: str
+    profile_url: str | None
+    urls: list[str] = field(default_factory=list)
+```
+
+Each site plugin should populate:
+
+```python
+urls = [
+    profile_url,
+    *extracted_links,
+    *social_links,
+    *bio_links
+]
+```
+
+---
+
+## 🧩 Step 3 — Build the Identity URL Registry
+
+After clustering accounts into an identity:
+
+```python
+def build_identity_url_registry(identity_id, accounts, artifacts, sources):
+    registry = {
+        "identity_id": identity_id,
+        "urls": {
+            "accounts": {},
+            "artifacts": {},
+            "sources": {},
+            "evidence": {}
+        }
+    }
+
+    # Accounts
+    for acc in accounts:
+        registry["urls"]["accounts"][acc.source] = acc.profile_url
+        for u in acc.urls:
+            registry["urls"]["evidence"].setdefault("profile_links", []).append(u)
+
+    # Artifacts
+    for art in artifacts:
+        kind = art["attributes"]["kind"]
+        registry["urls"]["artifacts"].setdefault(kind, []).append(art["id"])
+
+    # Sources
+    for src in sources:
+        registry["urls"]["sources"].setdefault(src["engine"], []).append(src["url"])
+
+    return registry
+```
+
+---
+
+## 🧩 Step 4 — Attach the URL registry to the identity node in the graph
+
+```python
+identity_node.attributes["urls"] = registry["urls"]
+```
+
+This means your JavaScript graph viewer can show:
+
+- All URLs for the identity  
+- All URLs for each account  
+- All URLs for each artifact  
+- All URLs used as evidence  
+
+---
+
+## 🧩 Step 5 — Expose URLs in the `/api/identity-graph` endpoint
+
+Add:
+
+```python
+node_dict["urls"] = node.attributes.get("urls", {})
+```
+
+Now the front‑end can display:
+
+- “All known URLs for this identity”  
+- “All URLs extracted from this account”  
+- “All URLs used as evidence for this edge”  
+
+---
+
+## 🧩 Step 6 — Add URL‑based enrichment plugins
+Now that URLs are normalized and stored, you can add:
+
+- **URL pattern detectors**  
+- **Domain ownership plugins**  
+- **Reverse WHOIS plugins**  
+- **Link graph plugins**  
+- **Re‑crawl plugins**  
+
+Because the URLs are now **identity‑anchored**, enrichment becomes trivial.
+
+---
+
+## 🧩 Step 7 — Add URL‑based graph edges
+Example:
+
+```python
+Edge(
+    src=account.node_id,
+    dst=f"artifact:domain:{domain}",
+    type="LINKS_TO_DOMAIN",
+    weight=0.8,
+    plugin="domain_extractor",
+    evidence={"url": url}
+)
+```
+
+This turns URLs into **graph structure**, not just metadata.
+
+---
+
+## 🧩 Step 8 — Add URL‑based similarity signals
+Example:
+
+```python
+if domain_a == domain_b:
+    score += 0.4
+```
+
+Or:
+
+```python
+if avatar_url_hashes_match:
+    score += 0.6
+```
+
+URLs become **direct similarity signals**.
+
+---
+
+## 🧩 Step 9 — Add URL‑based identity confidence
+Example:
+
+- Same GitHub + Twitter + Reddit URLs → 0.9 confidence  
+- Same email URL → 1.0 confidence  
+- Same domain → 0.8 confidence  
+- Same avatar URL → 0.95 confidence  
+
+URLs become **the strongest identity anchors**.
+
+---
+
+## 🧩 Step 10 — Add URL‑based UI features
+Your front‑end can now show:
+
+- “Primary URLs”  
+- “Secondary URLs”  
+- “Evidence URLs”  
+- “Discovered URLs”  
+- “Suspicious URLs”  
+- “Cross‑platform URLs”  
+
+This makes the identity mesh **navigable**.
+
+---
+
+## 🎯 Summary: What we improved
+You now have:
+
+- A **canonical URL registry** per identity  
+- Normalized URLs from all plugins  
+- URLs stored in accounts, artifacts, and sources  
+- URLs attached to identity nodes  
+- URLs exposed in the API  
+- URLs used for similarity scoring  
+- URLs used for graph edges  
+- URLs used for enrichment  
+- URLs used for UI visualization  
+
+This is the **core foundation** of a real identity‑intelligence system.
+
+---
+
+If you want, I can now generate:
+
+- **The full URL extraction plugin pack** (bio link extractor, domain extractor, avatar URL extractor, etc.)  
+- **The URL enrichment plugin pack** (WHOIS, DNS, SSL, favicon hash, etc.)  
+- **The URL‑based identity scoring model**  
+- **The URL‑centric graph visualization layer**
+
+Which one do you want next?
