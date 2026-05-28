@@ -1,0 +1,343 @@
+Baymont, this is exactly the right next step.  
+URLs are good, but **unique identifiers** are the *real* backbone of identity correlation. They’re the stable, platform‑native anchors that don’t change even when usernames, display names, bios, or URLs do.
+
+To make your identity mesh truly powerful, we need to:
+
+- extract unique IDs from every platform  
+- normalize them  
+- store them in the identity registry  
+- expose them in the graph  
+- use them as high‑confidence edges  
+- treat them as first‑class artifacts  
+
+Let’s build that layer cleanly and systematically.
+
+---
+
+# 🔑 The Universal Identity Identifier Registry (UIIR)
+
+Every identity gets a dedicated structure for unique IDs:
+
+```json
+{
+  "identity_id": "id_001",
+  "identifiers": {
+    "github": { "user_id": 12345 },
+    "twitter": { "rest_id": "9876543210" },
+    "reddit": { "user_id": "t2_abcd1234" },
+    "instagram": { "pk": "1234567890" },
+    "tiktok": { "sec_uid": "MS4wLjABAAAA..." },
+    "facebook": { "profile_id": "1000123456789" },
+    "linkedin": { "urn": "ACoAAD12345" },
+    "youtube": { "channel_id": "UCabc123XYZ" },
+    "mastodon": { "acct": "user@server.social" },
+    "bluesky": { "did": "did:plc:abcd1234" },
+    "medium": { "user_id": "abcdef123456" }
+  }
+}
+```
+
+These identifiers are **more stable than URLs** and often **globally unique**.
+
+---
+
+# 🧩 Why unique IDs matter  
+Unique IDs give you:
+
+- **High‑confidence identity matches**  
+- **Stable references even if usernames change**  
+- **Direct API access** (if you add API‑based enrichment later)  
+- **Cross‑platform correlation**  
+- **Graph edges with near‑certainty**  
+
+They’re the *DNA* of the identity mesh.
+
+---
+
+# 🧬 Step 1 — Extract unique IDs in each site plugin
+
+Below are the identifiers each platform exposes and how to extract them.
+
+---
+
+## 🟦 GitHub  
+**Identifier:** numeric user ID  
+**Pattern:** `"data-hovercard-user-id=\"(\d+)\""`
+
+```python
+user_id = re.search(r'data-hovercard-user-id="(\d+)"', html)
+```
+
+---
+
+## 🟦 Twitter / X  
+**Identifier:** `rest_id`  
+**Pattern:** `"rest_id":"(\d+)"`
+
+```python
+rest_id = re.search(r'"rest_id":"(\d+)"', html)
+```
+
+---
+
+## 🟧 Reddit  
+**Identifier:** `t2_` prefixed user ID  
+**Pattern:** `"t2_[A-Za-z0-9]+"`
+
+```python
+user_id = re.search(r'"id":"(t2_[A-Za-z0-9]+)"', html)
+```
+
+---
+
+## 🟪 Instagram  
+**Identifier:** `pk`  
+**Pattern:** `"pk":(\d+)`
+
+```python
+pk = re.search(r'"pk":(\d+)', html)
+```
+
+---
+
+## 🎵 TikTok  
+**Identifier:** `secUid`  
+**Pattern:** `"secUid":"([^"]+)"`
+
+```python
+sec_uid = re.search(r'"secUid":"([^"]+)"', html)
+```
+
+---
+
+## 🔵 Facebook  
+**Identifier:** numeric profile ID  
+**Pattern:** `"entity_id":"(\d+)"`
+
+```python
+profile_id = re.search(r'"entity_id":"(\d+)"', html)
+```
+
+---
+
+## 🔗 LinkedIn  
+**Identifier:** URN  
+**Pattern:** `"urn:li:fs_miniProfile:(\d+)"`
+
+```python
+urn = re.search(r'"urn:li:fs_miniProfile:(\d+)"', html)
+```
+
+---
+
+## 🔴 YouTube  
+**Identifier:** channel ID  
+**Pattern:** `"channelId":"([^"]+)"`
+
+```python
+channel_id = re.search(r'"channelId":"([^"]+)"', html)
+```
+
+---
+
+## 🟣 Mastodon  
+**Identifier:** full acct  
+**Pattern:** `@user@server`
+
+Already extracted.
+
+---
+
+## 🟦 Bluesky  
+**Identifier:** DID  
+**Pattern:** `"did:plc:[A-Za-z0-9]+"`
+
+```python
+did = re.search(r'"did:plc:[A-Za-z0-9]+"', html)
+```
+
+---
+
+## 🟩 Medium  
+**Identifier:** user ID  
+**Pattern:** `"userId":"([A-Za-z0-9]+)"`
+
+```python
+user_id = re.search(r'"userId":"([A-Za-z0-9]+)"', html)
+```
+
+---
+
+# 🧩 Step 2 — Store identifiers inside the Account object
+
+Extend your `Account` model:
+
+```python
+@dataclass
+class Account:
+    ...
+    identifiers: Dict[str, str] = field(default_factory=dict)
+```
+
+Each site plugin populates:
+
+```python
+identifiers = { "user_id": extracted_id }
+```
+
+---
+
+# 🧩 Step 3 — Add identifiers to the identity registry
+
+```python
+identity_node.attributes["identifiers"] = merge_identifiers_from_accounts(accounts)
+```
+
+Where:
+
+```python
+def merge_identifiers_from_accounts(accounts):
+    merged = {}
+    for acc in accounts:
+        if acc.identifiers:
+            merged[acc.source] = acc.identifiers
+    return merged
+```
+
+---
+
+# 🧩 Step 4 — Add identifier nodes to the graph (optional but powerful)
+
+Each identifier becomes an artifact node:
+
+```python
+Node(
+    id=f"artifact:{platform}:{identifier}",
+    type="artifact",
+    label=f"{platform} ID {identifier}",
+    attributes={"kind": "unique_id"}
+)
+```
+
+And edges:
+
+```python
+Edge(
+    src=account.node_id,
+    dst=f"artifact:{platform}:{identifier}",
+    type="HAS_UNIQUE_ID",
+    weight=1.0,
+    plugin="unique_id_extractor"
+)
+```
+
+This makes identifiers **first‑class graph citizens**.
+
+---
+
+# 🧩 Step 5 — Use identifiers in similarity scoring
+
+Add a new similarity plugin:
+
+```python
+class UniqueIDMatchPlugin(SimilarityPlugin):
+    name = "unique_id_match"
+
+    def compare(self, a, b):
+        ids_a = a.identifiers
+        ids_b = b.identifiers
+        shared = set(ids_a.items()) & set(ids_b.items())
+        score = 1.0 if shared else 0.0
+        return {"score": score, "signals": {"shared_ids": list(shared)}}
+```
+
+This is a **strongest‑possible signal**.
+
+---
+
+# 🧩 Step 6 — Add identifier edges to the identity mesh
+
+Graph plugin:
+
+```python
+class UniqueIDGraphPlugin(GraphPlugin):
+    name = "unique_id_graph"
+
+    def build_edges(self, accounts, artifacts):
+        edges = []
+        for i, a in enumerate(accounts):
+            for j in range(i+1, len(accounts)):
+                b = accounts[j]
+                shared = set(a.identifiers.items()) & set(b.identifiers.items())
+                if shared:
+                    edges.append(Edge(
+                        id=str(uuid.uuid4()),
+                        src=a.node_id,
+                        dst=b.node_id,
+                        type="UNIQUE_ID_MATCH",
+                        weight=1.0,
+                        plugin=self.name,
+                        evidence={"shared_ids": list(shared)}
+                    ))
+        return edges
+```
+
+This creates **identity‑level certainty**.
+
+---
+
+# 🧩 Step 7 — Expose identifiers in the API
+
+Add to `/api/identity-graph`:
+
+```python
+node_dict["identifiers"] = node.attributes.get("identifiers", {})
+```
+
+---
+
+# 🧩 Step 8 — Show identifiers in the UI
+
+Your JS viewer can now show:
+
+- GitHub ID  
+- Twitter rest_id  
+- Reddit t2_ ID  
+- Instagram pk  
+- TikTok secUid  
+- Facebook profile ID  
+- LinkedIn URN  
+- YouTube channel ID  
+- Bluesky DID  
+- Medium user ID  
+
+These become clickable, copyable, and searchable.
+
+---
+
+# 🎯 What you now have
+
+A **complete unique‑identifier layer** that:
+
+- extracts IDs from every platform  
+- stores them in accounts  
+- merges them into identities  
+- exposes them in the graph  
+- uses them for similarity scoring  
+- uses them for graph edges  
+- displays them in the UI  
+- anchors the entire identity mesh  
+
+This is the **strongest possible foundation** for identity correlation.
+
+---
+
+If you want, I can now generate:
+
+- **the full unique‑ID extraction plugin pack**  
+- **the unique‑ID graph plugin**  
+- **the unique‑ID similarity plugin**  
+- **the UI components for showing identifiers**  
+- **the identifier‑based confidence model**
+
+Which one should we build next?
