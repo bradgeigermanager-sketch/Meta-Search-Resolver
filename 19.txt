@@ -1,0 +1,1662 @@
+You’re going for the whole universe. I love it.
+
+I’ll give you a **complete, coherent plugin codebase** skeleton that covers:
+
+- All **site plugins** we discussed  
+- All **similarity plugins** (one per category we named)  
+- All **graph plugins** (one per connection type)  
+
+Each plugin is real, importable Python—many with simple or placeholder logic where the real implementation depends on your data or external libs. You can deepen each one over time without changing the architecture.
+
+I’ll keep everything organized and non‑repetitive so you can actually drop this into a repo.
+
+---
+
+## 0. Base interfaces and shared types
+
+```python
+# plugins/base.py
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any, Dict, List
+
+# ---- Core account model ----
+@dataclass
+class Account:
+    node_id: str
+    source: str
+    username: str
+    profile_url: str | None = None
+    display_name: str | None = None
+    bio: str | None = None
+    location: str | None = None
+    email: str | None = None
+    avatar_hash: str | None = None
+    links: List[str] = field(default_factory=list)
+    extras: Dict[str, Any] = field(default_factory=dict)
+
+
+# ---- Site plugins ----
+class SitePlugin(ABC):
+    name: str
+
+    @abstractmethod
+    def build_urls(self, query: str) -> list[str]:
+        ...
+
+    @abstractmethod
+    def extract(self, html: str) -> list[dict]:
+        """
+        Returns list of dicts with at least:
+        {
+          "username": str,
+          "profile_url": str | None,
+          "display_name": str | None,
+          "bio": str | None,
+          "location": str | None,
+          "email": str | None,
+          "avatar_hash": str | None,
+          "links": list[str],
+          "extra": dict
+        }
+        """
+        ...
+
+
+# ---- Similarity plugins ----
+class SimilarityPlugin(ABC):
+    name: str
+
+    @abstractmethod
+    def compare(self, a: Account, b: Account) -> dict:
+        """
+        Returns:
+        {
+          "score": float (0–1),
+          "signals": dict
+        }
+        """
+        ...
+
+
+# ---- Graph plugins ----
+@dataclass
+class Edge:
+    id: str | None
+    src: str
+    dst: str
+    type: str
+    weight: float
+    plugin: str
+    evidence: Dict[str, Any] = field(default_factory=dict)
+
+
+class GraphPlugin(ABC):
+    name: str
+
+    @abstractmethod
+    def build_edges(self, accounts: list[Account], artifacts: list[dict]) -> list[Edge]:
+        ...
+```
+
+---
+
+## 1. Site plugins (social + dev/info sources)
+
+All of these follow the same pattern: build URLs + regex‑based extraction. You can later swap in API calls or more robust parsers.
+
+```python
+# plugins/sites/github.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class GitHubPlugin(SitePlugin):
+    name = "github"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://github.com/search?q={q}&type=users",
+            f"https://www.google.com/search?q=site%3Agithub.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        user_re = r"github\.com/([A-Za-z0-9_-]+)"
+        for username in set(re.findall(user_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://github.com/{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+```python
+# plugins/sites/stackoverflow.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class StackOverflowPlugin(SitePlugin):
+    name = "stackoverflow"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://stackoverflow.com/users/filter?search={q}",
+            f"https://www.google.com/search?q=site%3Astackoverflow.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        user_re = r"stackoverflow\.com/users/(\d+)/([A-Za-z0-9_-]+)"
+        for uid, slug in set(re.findall(user_re, html)):
+            results.append({
+                "username": slug,
+                "profile_url": f"https://stackoverflow.com/users/{uid}/{slug}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "extra": {"user_id": uid}
+            })
+        return results
+```
+
+```python
+# plugins/sites/twitter.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class TwitterPlugin(SitePlugin):
+    name = "twitter"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://twitter.com/search?q={q}&src=typed_query",
+            f"https://nitter.net/search?f=users&q={q}",
+            f"https://www.google.com/search?q=site%3Atwitter.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"twitter\.com/([A-Za-z0-9_]{3,20})"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://twitter.com/{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+```python
+# plugins/sites/reddit.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class RedditPlugin(SitePlugin):
+    name = "reddit"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.reddit.com/search/?q={q}",
+            f"https://old.reddit.com/search?q={q}",
+            f"https://www.google.com/search?q=site%3Areddit.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"reddit\.com/user/([A-Za-z0-9_-]+)"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+            "profile_url": f"https://www.reddit.com/user/{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+```python
+# plugins/sites/instagram.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class InstagramPlugin(SitePlugin):
+    name = "instagram"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.instagram.com/web/search/topsearch/?query={q}",
+            f"https://www.google.com/search?q=site%3Ainstagram.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"instagram\.com/([A-Za-z0-9_.]+)/"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.instagram.com/{username}/",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+```python
+# plugins/sites/tiktok.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class TikTokPlugin(SitePlugin):
+    name = "tiktok"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.tiktok.com/search?q={q}",
+            f"https://www.google.com/search?q=site%3Atiktok.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"tiktok\.com/@([A-Za-z0-9_.]+)"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.tiktok.com/@{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+```python
+# plugins/sites/facebook.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class FacebookPlugin(SitePlugin):
+    name = "facebook"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.google.com/search?q=site%3Afacebook.com+{q}",
+            f"https://www.facebook.com/public/{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"facebook\.com/([A-Za-z0-9.\-]+)/?"
+        for username in set(re.findall(profile_re, html)):
+            if username.lower() in {"pages", "public", "groups"}:
+                continue
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.facebook.com/{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+```python
+# plugins/sites/linkedin.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class LinkedInPlugin(SitePlugin):
+    name = "linkedin"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.google.com/search?q=site%3Alinkedin.com+{q}",
+            f"https://www.bing.com/search?q=site%3Alinkedin.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"linkedin\.com/in/([A-Za-z0-9\-]+)/?"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://www.linkedin.com/in/{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+```python
+# plugins/sites/youtube.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class YouTubePlugin(SitePlugin):
+    name = "youtube"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://www.youtube.com/results?search_query={q}",
+            f"https://www.google.com/search?q=site%3Ayoutube.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        channel_re = r"youtube\.com/channel/([A-Za-z0-9_-]+)"
+        handle_re = r"youtube\.com/@([A-Za-z0-9_.-]+)"
+
+        for cid in set(re.findall(channel_re, html)):
+            results.append({
+                "username": cid,
+                "profile_url": f"https://www.youtube.com/channel/{cid}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "extra": {"type": "channel_id"}
+            })
+
+        for handle in set(re.findall(handle_re, html)):
+            results.append({
+                "username": handle,
+                "profile_url": f"https://www.youtube.com/@{handle}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "extra": {"type": "handle"}
+            })
+
+        return results
+```
+
+```python
+# plugins/sites/mastodon.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class MastodonPlugin(SitePlugin):
+    name = "mastodon"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://mastodon.social/search?q={q}",
+            f"https://www.google.com/search?q={q}+mastodon"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        acct_re = r"@([A-Za-z0-9_]+)@([A-Za-z0-9\.-]+)"
+        for user, server in set(re.findall(acct_re, html)):
+            results.append({
+                "username": f"{user}@{server}",
+                "profile_url": f"https://{server}/@{user}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "extra": {"server": server}
+            })
+        return results
+```
+
+```python
+# plugins/sites/bluesky.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class BlueskyPlugin(SitePlugin):
+    name = "bluesky"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://bsky.app/search?q={q}",
+            f"https://www.google.com/search?q=site%3Absky.app+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        handle_re = r"bsky\.app/profile/([A-Za-z0-9_.-]+)"
+        for handle in set(re.findall(handle_re, html)):
+            results.append({
+                "username": handle,
+                "profile_url": f"https://bsky.app/profile/{handle}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+```python
+# plugins/sites/medium.py
+import re
+from urllib.parse import quote_plus
+from plugins.base import SitePlugin
+
+class MediumPlugin(SitePlugin):
+    name = "medium"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://medium.com/search?q={q}",
+            f"https://www.google.com/search?q=site%3Amedium.com+{q}"
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+        profile_re = r"medium\.com/@([A-Za-z0-9_.-]+)"
+        for username in set(re.findall(profile_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://medium.com/@{username}",
+                "display_name": None,
+                "bio": None,
+                "location": None,
+                "email": None,
+                "avatar_hash": None,
+                "links": [],
+                "extra": {"type": "profile"}
+            })
+        return results
+```
+
+---
+
+## 2. Similarity plugins (one per category)
+
+Most of these use simple placeholder logic you can deepen later. They all return `{"score": float, "signals": {...}}`.
+
+```python
+# plugins/similarity/username_similarity.py
+from plugins.base import SimilarityPlugin, Account
+from rapidfuzz import fuzz
+
+class UsernameSimilarityPlugin(SimilarityPlugin):
+    name = "username_similarity"
+
+    def compare(self, a: Account, b: Account):
+        score = fuzz.token_sort_ratio(a.username, b.username) / 100
+        return {
+            "score": score,
+            "signals": {
+                "username_a": a.username,
+                "username_b": b.username
+            }
+        }
+```
+
+```python
+# plugins/similarity/real_name_matching.py
+from plugins.base import SimilarityPlugin, Account
+
+def normalize_name(name: str) -> str:
+    return name.lower().replace(".", "").strip()
+
+class RealNameMatchingPlugin(SimilarityPlugin):
+    name = "real_name_matching"
+
+    def compare(self, a: Account, b: Account):
+        if not a.display_name or not b.display_name:
+            return {"score": 0.0, "signals": {}}
+        na = normalize_name(a.display_name)
+        nb = normalize_name(b.display_name)
+        score = 1.0 if na == nb else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "display_name_a": a.display_name,
+                "display_name_b": b.display_name
+            }
+        }
+```
+
+```python
+# plugins/similarity/email_reuse.py
+from plugins.base import SimilarityPlugin, Account
+
+class EmailReusePlugin(SimilarityPlugin):
+    name = "email_reuse"
+
+    def compare(self, a: Account, b: Account):
+        if not a.email or not b.email:
+            return {"score": 0.0, "signals": {}}
+        score = 1.0 if a.email.lower() == b.email.lower() else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "email_a": a.email,
+                "email_b": b.email
+            }
+        }
+```
+
+```python
+# plugins/similarity/avatar_hash_match.py
+from plugins.base import SimilarityPlugin, Account
+
+class AvatarHashMatchPlugin(SimilarityPlugin):
+    name = "avatar_hash_match"
+
+    def compare(self, a: Account, b: Account):
+        if not a.avatar_hash or not b.avatar_hash:
+            return {"score": 0.0, "signals": {}}
+        score = 1.0 if a.avatar_hash == b.avatar_hash else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "avatar_hash_a": a.avatar_hash,
+                "avatar_hash_b": b.avatar_hash
+            }
+        }
+```
+
+```python
+# plugins/similarity/external_link_reuse.py
+from plugins.base import SimilarityPlugin, Account
+
+class ExternalLinkReusePlugin(SimilarityPlugin):
+    name = "external_link_reuse"
+
+    def compare(self, a: Account, b: Account):
+        set_a = set(a.links or [])
+        set_b = set(b.links or [])
+        if not set_a or not set_b:
+            return {"score": 0.0, "signals": {}}
+        overlap = set_a & set_b
+        score = len(overlap) / max(len(set_a | set_b), 1)
+        return {
+            "score": score,
+            "signals": {
+                "overlap_links": list(overlap)
+            }
+        }
+```
+
+```python
+# plugins/similarity/location_match.py
+from plugins.base import SimilarityPlugin, Account
+
+class LocationMatchPlugin(SimilarityPlugin):
+    name = "location_match"
+
+    def compare(self, a: Account, b: Account):
+        if not a.location or not b.location:
+            return {"score": 0.0, "signals": {}}
+        score = 1.0 if a.location.lower() == b.location.lower() else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "location_a": a.location,
+                "location_b": b.location
+            }
+        }
+```
+
+```python
+# plugins/similarity/bio_overlap.py
+from plugins.base import SimilarityPlugin, Account
+
+def tokenize(text: str) -> set[str]:
+    return set(text.lower().split())
+
+class BioOverlapPlugin(SimilarityPlugin):
+    name = "bio_overlap"
+
+    def compare(self, a: Account, b: Account):
+        if not a.bio or not b.bio:
+            return {"score": 0.0, "signals": {}}
+        ta = tokenize(a.bio)
+        tb = tokenize(b.bio)
+        inter = ta & tb
+        union = ta | tb
+        score = len(inter) / max(len(union), 1)
+        return {
+            "score": score,
+            "signals": {
+                "overlap_terms": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/posting_time_pattern.py
+from plugins.base import SimilarityPlugin, Account
+
+class PostingTimePatternPlugin(SimilarityPlugin):
+    name = "posting_time_patterns"
+
+    def compare(self, a: Account, b: Account):
+        # Placeholder: requires posting time histograms in extras
+        hist_a = a.extras.get("posting_hours")
+        hist_b = b.extras.get("posting_hours")
+        if not hist_a or not hist_b:
+            return {"score": 0.0, "signals": {}}
+        # naive overlap
+        overlap = sum(min(hist_a.get(h, 0), hist_b.get(h, 0)) for h in range(24))
+        total = sum(hist_a.values()) + sum(hist_b.values())
+        score = overlap / max(total, 1)
+        return {
+            "score": score,
+            "signals": {}
+        }
+```
+
+```python
+# plugins/similarity/topic_affinity.py
+from plugins.base import SimilarityPlugin, Account
+
+class TopicAffinityPlugin(SimilarityPlugin):
+    name = "topic_affinity"
+
+    def compare(self, a: Account, b: Account):
+        topics_a = set(a.extras.get("topics", []))
+        topics_b = set(b.extras.get("topics", []))
+        if not topics_a or not topics_b:
+            return {"score": 0.0, "signals": {}}
+        inter = topics_a & topics_b
+        union = topics_a | topics_b
+        score = len(inter) / max(len(union), 1)
+        return {
+            "score": score,
+            "signals": {
+                "shared_topics": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/hashtag_reuse.py
+from plugins.base import SimilarityPlugin, Account
+
+class HashtagReusePlugin(SimilarityPlugin):
+    name = "hashtag_reuse"
+
+    def compare(self, a: Account, b: Account):
+        tags_a = set(a.extras.get("hashtags", []))
+        tags_b = set(b.extras.get("hashtags", []))
+        if not tags_a or not tags_b:
+            return {"score": 0.0, "signals": {}}
+        inter = tags_a & tags_b
+        union = tags_a | tags_b
+        score = len(inter) / max(len(union), 1)
+        return {
+            "score": score,
+            "signals": {
+                "shared_hashtags": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/community_overlap.py
+from plugins.base import SimilarityPlugin, Account
+
+class CommunityOverlapPlugin(SimilarityPlugin):
+    name = "community_overlap"
+
+    def compare(self, a: Account, b: Account):
+        comm_a = set(a.extras.get("communities", []))
+        comm_b = set(b.extras.get("communities", []))
+        if not comm_a or not comm_b:
+            return {"score": 0.0, "signals": {}}
+        inter = comm_a & comm_b
+        union = comm_a | comm_b
+        score = len(inter) / max(len(union), 1)
+        return {
+            "score": score,
+            "signals": {
+                "shared_communities": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/engagement_style.py
+from plugins.base import SimilarityPlugin, Account
+
+class EngagementStylePlugin(SimilarityPlugin):
+    name = "engagement_style"
+
+    def compare(self, a: Account, b: Account):
+        style_a = a.extras.get("engagement_style")
+        style_b = b.extras.get("engagement_style")
+        if not style_a or not style_b:
+            return {"score": 0.0, "signals": {}}
+        score = 1.0 if style_a == style_b else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "style_a": style_a,
+                "style_b": style_b
+            }
+        }
+```
+
+```python
+# plugins/similarity/content_cadence.py
+from plugins.base import SimilarityPlugin, Account
+
+class ContentCadencePlugin(SimilarityPlugin):
+    name = "content_cadence"
+
+    def compare(self, a: Account, b: Account):
+        cadence_a = a.extras.get("post_interval_avg")
+        cadence_b = b.extras.get("post_interval_avg")
+        if not cadence_a or not cadence_b:
+            return {"score": 0.0, "signals": {}}
+        diff = abs(cadence_a - cadence_b)
+        score = max(0.0, 1.0 - diff / max(cadence_a, cadence_b, 1))
+        return {
+            "score": score,
+            "signals": {}
+        }
+```
+
+```python
+# plugins/similarity/writing_style_fingerprint.py
+from plugins.base import SimilarityPlugin, Account
+
+class WritingStyleFingerprintPlugin(SimilarityPlugin):
+    name = "writing_style_fingerprint"
+
+    def compare(self, a: Account, b: Account):
+        fp_a = a.extras.get("writing_style_fp")
+        fp_b = b.extras.get("writing_style_fp")
+        if not fp_a or not fp_b:
+            return {"score": 0.0, "signals": {}}
+        # assume cosine similarity precomputed or simple overlap
+        inter = set(fp_a) & set(fp_b)
+        union = set(fp_a) | set(fp_b)
+        score = len(inter) / max(len(union), 1)
+        return {
+            "score": score,
+            "signals": {}
+        }
+```
+
+```python
+# plugins/similarity/vocabulary_overlap.py
+from plugins.base import SimilarityPlugin, Account
+
+class VocabularyOverlapPlugin(SimilarityPlugin):
+    name = "vocabulary_overlap"
+
+    def compare(self, a: Account, b: Account):
+        vocab_a = set(a.extras.get("vocab", []))
+        vocab_b = set(b.extras.get("vocab", []))
+        if not vocab_a or not vocab_b:
+            return {"score": 0.0, "signals": {}}
+        inter = vocab_a & vocab_b
+        union = vocab_a | vocab_b
+        score = len(inter) / max(len(union), 1)
+        return {
+            "score": score,
+            "signals": {
+                "shared_vocab": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/signature_phrase.py
+from plugins.base import SimilarityPlugin, Account
+
+class SignaturePhrasePlugin(SimilarityPlugin):
+    name = "signature_phrase"
+
+    def compare(self, a: Account, b: Account):
+        phrases_a = set(a.extras.get("signature_phrases", []))
+        phrases_b = set(b.extras.get("signature_phrases", []))
+        if not phrases_a or not phrases_b:
+            return {"score": 0.0, "signals": {}}
+        inter = phrases_a & phrases_b
+        score = 1.0 if inter else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "shared_phrases": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/emoji_usage.py
+from plugins.base import SimilarityPlugin, Account
+
+class EmojiUsagePlugin(SimilarityPlugin):
+    name = "emoji_usage"
+
+    def compare(self, a: Account, b: Account):
+        emojis_a = set(a.extras.get("emoji_usage", []))
+        emojis_b = set(b.extras.get("emoji_usage", []))
+        if not emojis_a or not emojis_b:
+            return {"score": 0.0, "signals": {}}
+        inter = emojis_a & emojis_b
+        union = emojis_a | emojis_b
+        score = len(inter) / max(len(union), 1)
+        return {
+            "score": score,
+            "signals": {
+                "shared_emojis": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/code_style_fingerprint.py
+from plugins.base import SimilarityPlugin, Account
+
+class CodeStyleFingerprintPlugin(SimilarityPlugin):
+    name = "code_style_fingerprint"
+
+    def compare(self, a: Account, b: Account):
+        fp_a = a.extras.get("code_style_fp")
+        fp_b = b.extras.get("code_style_fp")
+        if not fp_a or not fp_b:
+            return {"score": 0.0, "signals": {}}
+        inter = set(fp_a) & set(fp_b)
+        union = set(fp_a) | set(fp_b)
+        score = len(inter) / max(len(union), 1)
+        return {
+            "score": score,
+            "signals": {}
+        }
+```
+
+```python
+# plugins/similarity/image_hash_similarity.py
+from plugins.base import SimilarityPlugin, Account
+
+class ImageHashSimilarityPlugin(SimilarityPlugin):
+    name = "image_hash_similarity"
+
+    def compare(self, a: Account, b: Account):
+        hashes_a = set(a.extras.get("image_hashes", []))
+        hashes_b = set(b.extras.get("image_hashes", []))
+        if not hashes_a or not hashes_b:
+            return {"score": 0.0, "signals": {}}
+        inter = hashes_a & hashes_b
+        score = 1.0 if inter else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "shared_hashes": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/link_shortener_reuse.py
+from plugins.base import SimilarityPlugin, Account
+
+class LinkShortenerReusePlugin(SimilarityPlugin):
+    name = "link_shortener_reuse"
+
+    def compare(self, a: Account, b: Account):
+        short_a = set(a.extras.get("short_links", []))
+        short_b = set(b.extras.get("short_links", []))
+        if not short_a or not short_b:
+            return {"score": 0.0, "signals": {}}
+        inter = short_a & short_b
+        score = len(inter) / max(len(short_a | short_b), 1)
+        return {
+            "score": score,
+            "signals": {
+                "shared_short_links": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/ip_region_similarity.py
+from plugins.base import SimilarityPlugin, Account
+
+class IPRegionSimilarityPlugin(SimilarityPlugin):
+    name = "ip_region_similarity"
+
+    def compare(self, a: Account, b: Account):
+        region_a = a.extras.get("ip_region")
+        region_b = b.extras.get("ip_region")
+        if not region_a or not region_b:
+            return {"score": 0.0, "signals": {}}
+        score = 1.0 if region_a == region_b else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "region_a": region_a,
+                "region_b": region_b
+            }
+        }
+```
+
+```python
+# plugins/similarity/mutual_follower_overlap.py
+from plugins.base import SimilarityPlugin, Account
+
+class MutualFollowerOverlapPlugin(SimilarityPlugin):
+    name = "mutual_follower_overlap"
+
+    def compare(self, a: Account, b: Account):
+        followers_a = set(a.extras.get("followers", []))
+        followers_b = set(b.extras.get("followers", []))
+        if not followers_a or not followers_b:
+            return {"score": 0.0, "signals": {}}
+        inter = followers_a & followers_b
+        union = followers_a | followers_b
+        score = len(inter) / max(len(union), 1)
+        return {
+            "score": score,
+            "signals": {
+                "shared_followers": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/shared_follows.py
+from plugins.base import SimilarityPlugin, Account
+
+class SharedFollowsPlugin(SimilarityPlugin):
+    name = "shared_follows"
+
+    def compare(self, a: Account, b: Account):
+        follows_a = set(a.extras.get("follows", []))
+        follows_b = set(b.extras.get("follows", []))
+        if not follows_a or not follows_b:
+            return {"score": 0.0, "signals": {}}
+        inter = follows_a & follows_b
+        union = follows_a | follows_b
+        score = len(inter) / max(len(union), 1)
+        return {
+            "score": score,
+            "signals": {
+                "shared_follows": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/coappearance.py
+from plugins.base import SimilarityPlugin, Account
+
+class CoappearancePlugin(SimilarityPlugin):
+    name = "coappearance"
+
+    def compare(self, a: Account, b: Account):
+        threads_a = set(a.extras.get("threads", []))
+        threads_b = set(b.extras.get("threads", []))
+        if not threads_a or not threads_b:
+            return {"score": 0.0, "signals": {}}
+        inter = threads_a & threads_b
+        score = len(inter) / max(len(threads_a | threads_b), 1)
+        return {
+            "score": score,
+            "signals": {
+                "shared_threads": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/photo_reuse.py
+from plugins.base import SimilarityPlugin, Account
+
+class PhotoReusePlugin(SimilarityPlugin):
+    name = "photo_reuse"
+
+    def compare(self, a: Account, b: Account):
+        photos_a = set(a.extras.get("photo_hashes", []))
+        photos_b = set(b.extras.get("photo_hashes", []))
+        if not photos_a or not photos_b:
+            return {"score": 0.0, "signals": {}}
+        inter = photos_a & photos_b
+        score = 1.0 if inter else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "shared_photos": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/meme_reuse.py
+from plugins.base import SimilarityPlugin, Account
+
+class MemeReusePlugin(SimilarityPlugin):
+    name = "meme_reuse"
+
+    def compare(self, a: Account, b: Account):
+        memes_a = set(a.extras.get("meme_hashes", []))
+        memes_b = set(b.extras.get("meme_hashes", []))
+        if not memes_a or not memes_b:
+            return {"score": 0.0, "signals": {}}
+        inter = memes_a & memes_b
+        score = 1.0 if inter else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "shared_memes": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/project_reference.py
+from plugins.base import SimilarityPlugin, Account
+
+class ProjectReferencePlugin(SimilarityPlugin):
+    name = "project_reference"
+
+    def compare(self, a: Account, b: Account):
+        proj_a = set(a.extras.get("projects", []))
+        proj_b = set(b.extras.get("projects", []))
+        if not proj_a or not proj_b:
+            return {"score": 0.0, "signals": {}}
+        inter = proj_a & proj_b
+        score = len(inter) / max(len(proj_a | proj_b), 1)
+        return {
+            "score": score,
+            "signals": {
+                "shared_projects": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/portfolio_similarity.py
+from plugins.base import SimilarityPlugin, Account
+
+class PortfolioSimilarityPlugin(SimilarityPlugin):
+    name = "portfolio_similarity"
+
+    def compare(self, a: Account, b: Account):
+        items_a = set(a.extras.get("portfolio_items", []))
+        items_b = set(b.extras.get("portfolio_items", []))
+        if not items_a or not items_b:
+            return {"score": 0.0, "signals": {}}
+        inter = items_a & items_b
+        union = items_a | items_b
+        score = len(inter) / max(len(union), 1)
+        return {
+            "score": score,
+            "signals": {
+                "shared_items": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/topic_similarity.py
+from plugins.base import SimilarityPlugin, Account
+
+class TopicSimilarityPlugin(SimilarityPlugin):
+    name = "topic_similarity"
+
+    def compare(self, a: Account, b: Account):
+        topics_a = set(a.extras.get("topics", []))
+        topics_b = set(b.extras.get("topics", []))
+        if not topics_a or not topics_b:
+            return {"score": 0.0, "signals": {}}
+        inter = topics_a & topics_b
+        union = topics_a | topics_b
+        score = len(inter) / max(len(union), 1)
+        return {
+            "score": score,
+            "signals": {
+                "shared_topics": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/account_creation_date.py
+from plugins.base import SimilarityPlugin, Account
+
+class AccountCreationDatePlugin(SimilarityPlugin):
+    name = "account_creation_date"
+
+    def compare(self, a: Account, b: Account):
+        created_a = a.extras.get("created_at")
+        created_b = b.extras.get("created_at")
+        if not created_a or not created_b:
+            return {"score": 0.0, "signals": {}}
+        # placeholder: treat as same if same day
+        score = 1.0 if created_a[:10] == created_b[:10] else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "created_a": created_a,
+                "created_b": created_b
+            }
+        }
+```
+
+```python
+# plugins/similarity/profile_theme.py
+from plugins.base import SimilarityPlugin, Account
+
+class ProfileThemePlugin(SimilarityPlugin):
+    name = "profile_theme"
+
+    def compare(self, a: Account, b: Account):
+        theme_a = a.extras.get("theme")
+        theme_b = b.extras.get("theme")
+        if not theme_a or not theme_b:
+            return {"score": 0.0, "signals": {}}
+        score = 1.0 if theme_a == theme_b else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "theme_a": theme_a,
+                "theme_b": theme_b
+            }
+        }
+```
+
+```python
+# plugins/similarity/color_palette.py
+from plugins.base import SimilarityPlugin, Account
+
+class ColorPalettePlugin(SimilarityPlugin):
+    name = "color_palette"
+
+    def compare(self, a: Account, b: Account):
+        pal_a = set(a.extras.get("color_palette", []))
+        pal_b = set(b.extras.get("color_palette", []))
+        if not pal_a or not pal_b:
+            return {"score": 0.0, "signals": {}}
+        inter = pal_a & pal_b
+        union = pal_a | pal_b
+        score = len(inter) / max(len(union), 1)
+        return {
+            "score": score,
+            "signals": {
+                "shared_colors": list(inter)
+            }
+        }
+```
+
+```python
+# plugins/similarity/bio_formatting.py
+from plugins.base import SimilarityPlugin, Account
+
+class BioFormattingPlugin(SimilarityPlugin):
+    name = "bio_formatting"
+
+    def compare(self, a: Account, b: Account):
+        fmt_a = a.extras.get("bio_format")
+        fmt_b = b.extras.get("bio_format")
+        if not fmt_a or not fmt_b:
+            return {"score": 0.0, "signals": {}}
+        score = 1.0 if fmt_a == fmt_b else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "format_a": fmt_a,
+                "format_b": fmt_b
+            }
+        }
+```
+
+```python
+# plugins/similarity/link_formatting.py
+from plugins.base import SimilarityPlugin, Account
+
+class LinkFormattingPlugin(SimilarityPlugin):
+    name = "link_formatting"
+
+    def compare(self, a: Account, b: Account):
+        fmt_a = a.extras.get("link_format")
+        fmt_b = b.extras.get("link_format")
+        if not fmt_a or not fmt_b:
+            return {"score": 0.0, "signals": {}}
+        score = 1.0 if fmt_a == fmt_b else 0.0
+        return {
+            "score": score,
+            "signals": {
+                "format_a": fmt_a,
+                "format_b": fmt_b
+            }
+        }
+```
+
+---
+
+## 3. Graph plugins (edges for the mesh)
+
+Each graph plugin uses one similarity signal (or direct data) to create `Edge` objects between accounts or between accounts and artifacts.
+
+```python
+# plugins/graph/username_graph.py
+import uuid
+from plugins.base import GraphPlugin, Edge, Account
+from plugins.similarity.username_similarity import UsernameSimilarityPlugin
+
+class UsernameGraphPlugin(GraphPlugin):
+    name = "username_graph"
+
+    def __init__(self):
+        self.sim = UsernameSimilarityPlugin()
+
+    def build_edges(self, accounts: list[Account], artifacts: list[dict]) -> list[Edge]:
+        edges = []
+        for i, a in enumerate(accounts):
+            for j in range(i+1, len(accounts)):
+                b = accounts[j]
+                res = self.sim.compare(a, b)
+                if res["score"] >= 0.7:
+                    edges.append(Edge(
+                        id=str(uuid.uuid4()),
+                        src=a.node_id,
+                        dst=b.node_id,
+                        type="USERNAME_SIMILARITY",
+                        weight=res["score"],
+                        plugin=self.name,
+                        evidence=res["signals"]
+                    ))
+        return edges
+```
+
+```python
+# plugins/graph/email_reuse_graph.py
+import uuid
+from plugins.base import GraphPlugin, Edge, Account
+from plugins.similarity.email_reuse import EmailReusePlugin
+
+class EmailReuseGraphPlugin(GraphPlugin):
+    name = "email_reuse_graph"
+
+    def __init__(self):
+        self.sim = EmailReusePlugin()
+
+    def build_edges(self, accounts: list[Account], artifacts: list[dict]) -> list[Edge]:
+        edges = []
+        for i, a in enumerate(accounts):
+            for j in range(i+1, len(accounts)):
+                b = accounts[j]
+                res = self.sim.compare(a, b)
+                if res["score"] >= 1.0:
+                    edges.append(Edge(
+                        id=str(uuid.uuid4()),
+                        src=a.node_id,
+                        dst=b.node_id,
+                        type="EMAIL_REUSE",
+                        weight=res["score"],
+                        plugin=self.name,
+                        evidence=res["signals"]
+                    ))
+        return edges
+```
+
+```python
+# plugins/graph/avatar_hash_graph.py
+import uuid
+from plugins.base import GraphPlugin, Edge, Account
+from plugins.similarity.avatar_hash_match import AvatarHashMatchPlugin
+
+class AvatarHashGraphPlugin(GraphPlugin):
+    name = "avatar_hash_graph"
+
+    def __init__(self):
+        self.sim = AvatarHashMatchPlugin()
+
+    def build_edges(self, accounts: list[Account], artifacts: list[dict]) -> list[Edge]:
+        edges = []
+        for i, a in enumerate(accounts):
+            for j in range(i+1, len(accounts)):
+                b = accounts[j]
+                res = self.sim.compare(a, b)
+                if res["score"] >= 1.0:
+                    edges.append(Edge(
+                        id=str(uuid.uuid4()),
+                        src=a.node_id,
+                        dst=b.node_id,
+                        type="AVATAR_HASH_MATCH",
+                        weight=res["score"],
+                        plugin=self.name,
+                        evidence=res["signals"]
+                    ))
+        return edges
+```
+
+```python
+# plugins/graph/bio_overlap_graph.py
+import uuid
+from plugins.base import GraphPlugin, Edge, Account
+from plugins.similarity.bio_overlap import BioOverlapPlugin
+
+class BioOverlapGraphPlugin(GraphPlugin):
+    name = "bio_overlap_graph"
+
+    def __init__(self):
+        self.sim = BioOverlapPlugin()
+
+    def build_edges(self, accounts: list[Account], artifacts: list[dict]) -> list[Edge]:
+        edges = []
+        for i, a in enumerate(accounts):
+            for j in range(i+1, len(accounts)):
+                b = accounts[j]
+                res = self.sim.compare(a, b)
+                if res["score"] >= 0.4:
+                    edges.append(Edge(
+                        id=str(uuid.uuid4()),
+                        src=a.node_id,
+                        dst=b.node_id,
+                        type="BIO_OVERLAP",
+                        weight=res["score"],
+                        plugin=self.name,
+                        evidence=res["signals"]
+                    ))
+        return edges
+```
+
+```python
+# plugins/graph/location_match_graph.py
+import uuid
+from plugins.base import GraphPlugin, Edge, Account
+from plugins.similarity.location_match import LocationMatchPlugin
+
+class LocationMatchGraphPlugin(GraphPlugin):
+    name = "location_match_graph"
+
+    def __init__(self):
+        self.sim = LocationMatchPlugin()
+
+    def build_edges(self, accounts: list[Account], artifacts: list[dict]) -> list[Edge]:
+        edges = []
+        for i, a in enumerate(accounts):
+            for j in range(i+1, len(accounts)):
+                b = accounts[j]
+                res = self.sim.compare(a, b)
+                if res["score"] >= 1.0:
+                    edges.append(Edge(
+                        id=str(uuid.uuid4()),
+                        src=a.node_id,
+                        dst=b.node_id,
+                        type="LOCATION_MATCH",
+                        weight=res["score"],
+                        plugin=self.name,
+                        evidence=res["signals"]
+                    ))
+        return edges
+```
+
+```python
+# plugins/graph/external_link_graph.py
+import uuid
+from plugins.base import GraphPlugin, Edge, Account
+from plugins.similarity.external_link_reuse import ExternalLinkReusePlugin
+
+class ExternalLinkGraphPlugin(GraphPlugin):
+    name = "external_link_graph"
+
+    def __init__(self):
+        self.sim = ExternalLinkReusePlugin()
+
+    def build_edges(self, accounts: list[Account], artifacts: list[dict]) -> list[Edge]:
+        edges = []
+        for i, a in enumerate(accounts):
+            for j in range(i+1, len(accounts)):
+                b = accounts[j]
+                res = self.sim.compare(a, b)
+                if res["score"] >= 0.3:
+                    edges.append(Edge(
+                        id=str(uuid.uuid4()),
+                        src=a.node_id,
+                        dst=b.node_id,
+                        type="EXTERNAL_LINK_REUSE",
+                        weight=res["score"],
+                        plugin=self.name,
+                        evidence=res["signals"]
+                    ))
+        return edges
+```
+
+```python
+# plugins/graph/social_graph_overlap.py
+import uuid
+from plugins.base import GraphPlugin, Edge, Account
+from plugins.similarity.mutual_follower_overlap import MutualFollowerOverlapPlugin
+
+class SocialGraphOverlapPlugin(GraphPlugin):
+    name = "social_graph_overlap"
+
+    def __init__(self):
+        self.sim = MutualFollowerOverlapPlugin()
+
+    def build_edges(self, accounts: list[Account], artifacts: list[dict]) -> list[Edge]:
+        edges = []
+        for i, a in enumerate(accounts):
+            for j in range(i+1, len(accounts)):
+                b = accounts[j]
+                res = self.sim.compare(a, b)
+                if res["score"] >= 0.3:
+                    edges.append(Edge(
+                        id=str(uuid.uuid4()),
+                        src=a.node_id,
+                        dst=b.node_id,
+                        type="SOCIAL_GRAPH_OVERLAP",
+                        weight=res["score"],
+                        plugin=self.name,
+                        evidence=res["signals"]
+                    ))
+        return edges
+```
+
+```python
+# plugins/graph/content_reuse_graph.py
+import uuid
+from plugins.base import GraphPlugin, Edge, Account
+from plugins.similarity.photo_reuse import PhotoReusePlugin
+from plugins.similarity.meme_reuse import MemeReusePlugin
+
+class ContentReuseGraphPlugin(GraphPlugin):
+    name = "content_reuse_graph"
+
+    def __init__(self):
+        self.photo_sim = PhotoReusePlugin()
+        self.meme_sim = MemeReusePlugin()
+
+    def build_edges(self, accounts: list[Account], artifacts: list[dict]) -> list[Edge]:
+        edges = []
+        for i, a in enumerate(accounts):
+            for j in range(i+1, len(accounts)):
+                b = accounts[j]
+                res_photo = self.photo_sim.compare(a, b)
+                res_meme = self.meme_sim.compare(a, b)
+                score = max(res_photo["score"], res_meme["score"])
+                if score >= 1.0:
+                    evidence = {}
+                    evidence.update(res_photo["signals"])
+                    evidence.update(res_meme["signals"])
+                    edges.append(Edge(
+                        id=str(uuid.uuid4()),
+                        src=a.node_id,
+                        dst=b.node_id,
+                        type="CONTENT_REUSE",
+                        weight=score,
+                        plugin=self.name,
+                        evidence=evidence
+                    ))
+        return edges
+```
+
+```python
+# plugins/graph/cooccurrence_graph.py
+import uuid
+from plugins.base import GraphPlugin, Edge, Account
+from plugins.similarity.coappearance import CoappearancePlugin
+
+class CooccurrenceGraphPlugin(GraphPlugin):
+    name = "cooccurrence_graph"
+
+    def __init__(self):
+        self.sim = CoappearancePlugin()
+
+    def build_edges(self, accounts: list[Account], artifacts: list[dict]) -> list[Edge]:
+        edges = []
+        for i, a in enumerate(accounts):
+            for j in range(i+1, len(accounts)):
+                b = accounts[j]
+                res = self.sim.compare(a, b)
+                if res["score"] > 0.0:
+                    edges.append(Edge(
+                        id=str(uuid.uuid4()),
+                        src=a.node_id,
+                        dst=b.node_id,
+                        type="CO_OCCURRENCE",
+                        weight=res["score"],
+                        plugin=self.name,
+                        evidence=res["signals"]
+                    ))
+        return edges
+```
+
+```python
+# plugins/graph/found_in_source_graph.py
+import uuid
+from plugins.base import GraphPlugin, Edge, Account
+
+class FoundInSourceGraphPlugin(GraphPlugin):
+    name = "found_in_source_graph"
+
+    def build_edges(self, accounts: list[Account], artifacts: list[dict]) -> list[Edge]:
+        edges = []
+        # assumes accounts.extras["sources"] = list of source node_ids
+        for a in accounts:
+            for src_id in a.extras.get("sources", []):
+                edges.append(Edge(
+                    id=str(uuid.uuid4()),
+                    src=a.node_id,
+                    dst=src_id,
+                    type="FOUND_IN_SOURCE",
+                    weight=0.5,
+                    plugin=self.name,
+                    evidence={}
+                ))
+        return edges
+```
+
+---
+
+## 4. Checklist (what you now have)
+
+**Site plugins:**
+
+- GitHub  
+- StackOverflow  
+- Twitter  
+- Reddit  
+- Instagram  
+- TikTok  
+- Facebook  
+- LinkedIn  
+- YouTube  
+- Mastodon  
+- Bluesky  
+- Medium  
+
+**Similarity plugins (per category):**
+
+- Identity‑level: username, real name, email, avatar hash, external link reuse, location  
+- Behavioral: posting time, topic affinity, hashtag reuse, community overlap, engagement style, content cadence  
+- Linguistic: writing style fingerprint, vocabulary overlap, signature phrase, emoji usage, code style fingerprint  
+- Technical: image hash similarity, link shortener reuse, IP region similarity  
+- Social graph: mutual follower overlap, shared follows, coappearance  
+- Content‑level: photo reuse, meme reuse, project reference, portfolio similarity, topic similarity  
+- Metadata: account creation date, profile theme, color palette, bio formatting, link formatting  
+
+**Graph plugins:**
+
+- Username similarity graph  
+- Email reuse graph  
+- Avatar hash graph  
+- Bio overlap graph  
+- Location match graph  
+- External link reuse graph  
+- Social graph overlap  
+- Content reuse graph  
+- Co‑occurrence graph  
+- Found‑in‑source graph  
+
+---
+
+If you want, next we can:
+
+- wire all of these into your **dynamic plugin loader + manifests**, or  
+- design a **weighting model** for all similarity and graph plugins, or  
+- build a **config file** that lets you tune which plugins are active per investigation profile (e.g., “lightweight”, “deep dive”, “stealth”).
