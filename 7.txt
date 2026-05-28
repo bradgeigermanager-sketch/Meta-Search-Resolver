@@ -1,0 +1,264 @@
+You’re at the fun part now—the part where this stops being “a bunch of scrapers” and becomes an **identity engine**.
+
+Let’s wire your plugins into a **cross‑platform correlation layer** that can say:
+
+> “These 7 accounts across GitHub, Twitter, Reddit, and LinkedIn are probably the same person—with 0.82 confidence.”
+
+---
+
+### 1. Core idea: identities, not accounts
+
+You already have **accounts** from plugins:
+
+```json
+{
+  "username": "bradgeiger",
+  "profile_url": "https://github.com/bradgeiger",
+  "extra": { "type": "profile" },
+  "source": "github"
+}
+```
+
+Cross‑platform correlation means grouping these into **identities**:
+
+```json
+{
+  "identity_id": "id_001",
+  "confidence": 0.82,
+  "accounts": [
+    { "source": "github", "username": "bradgeiger", "url": "..." },
+    { "source": "twitter", "username": "brad_geiger", "url": "..." },
+    { "source": "reddit", "username": "bradgeiger", "url": "..." }
+  ],
+  "signals": {
+    "username_similarity": 0.9,
+    "name_match": true,
+    "email_match": false,
+    "bio_overlap": 0.6,
+    "location_match": true
+  }
+}
+```
+
+---
+
+### 2. Data model for correlation
+
+**Account object** (from plugins):
+
+```python
+@dataclass
+class Account:
+    source: str          # "github", "twitter", ...
+    username: str
+    profile_url: str | None
+    display_name: str | None = None
+    bio: str | None = None
+    location: str | None = None
+    email: str | None = None
+    extras: dict = field(default_factory=dict)
+```
+
+**Identity object**:
+
+```python
+@dataclass
+class Identity:
+    id: str
+    accounts: list[Account]
+    signals: dict
+    confidence: float
+```
+
+---
+
+### 3. Similarity signals
+
+For any two accounts, compute signals:
+
+- **Username similarity**  
+  - normalized Levenshtein / Jaro‑Winkler  
+  - `bradgeiger` vs `brad_geiger` → high  
+- **Display name match**  
+  - `"Brad Geiger"` vs `"Bradley Geiger"`  
+- **Email match**  
+  - exact or same local part / domain  
+- **Bio overlap**  
+  - shared keywords: “developer”, “Python”, “Denver”  
+- **Location match**  
+  - “Denver, CO” vs “Denver”  
+- **External links**  
+  - GitHub bio links to Twitter, personal site, etc.  
+- **Time correlation** (optional)  
+  - similar activity windows  
+
+Example scoring function:
+
+```python
+def compare_accounts(a: Account, b: Account) -> dict:
+    signals = {}
+
+    # username similarity
+    signals["username_similarity"] = username_similarity(a.username, b.username)
+
+    # display name
+    if a.display_name and b.display_name:
+        signals["name_match"] = normalize(a.display_name) == normalize(b.display_name)
+    else:
+        signals["name_match"] = False
+
+    # email
+    signals["email_match"] = bool(a.email and b.email and a.email.lower() == b.email.lower())
+
+    # location
+    signals["location_match"] = location_match(a.location, b.location)
+
+    # bio overlap
+    signals["bio_overlap"] = bio_overlap(a.bio, b.bio)
+
+    return signals
+```
+
+Then convert signals → confidence:
+
+```python
+def score_signals(signals: dict) -> float:
+    score = 0.0
+
+    score += signals["username_similarity"] * 0.3
+    if signals["name_match"]:
+        score += 0.25
+    if signals["email_match"]:
+        score += 0.4
+    if signals["location_match"]:
+        score += 0.15
+    score += signals["bio_overlap"] * 0.2
+
+    return min(score, 1.0)
+```
+
+---
+
+### 4. Building identity clusters
+
+1. Collect all `Account` objects from all plugins.  
+2. Compare every pair (or use blocking by username/email to reduce complexity).  
+3. If `confidence >= threshold` (e.g. `0.6`), connect them in a graph.  
+4. Each **connected component** = one **identity**.
+
+Graph‑based approach:
+
+```python
+import networkx as nx
+
+def build_identity_graph(accounts: list[Account], threshold: float = 0.6):
+    G = nx.Graph()
+
+    for i, a in enumerate(accounts):
+        G.add_node(i, account=a)
+
+    for i in range(len(accounts)):
+        for j in range(i + 1, len(accounts)):
+            signals = compare_accounts(accounts[i], accounts[j])
+            conf = score_signals(signals)
+            if conf >= threshold:
+                G.add_edge(i, j, confidence=conf, signals=signals)
+
+    identities = []
+    for comp in nx.connected_components(G):
+        nodes = list(comp)
+        comp_accounts = [G.nodes[n]["account"] for n in nodes]
+        # aggregate signals / confidence
+        identities.append(
+            Identity(
+                id=f"id_{len(identities)+1}",
+                accounts=comp_accounts,
+                signals={},   # optional aggregate
+                confidence=max(
+                    (G.edges[e]["confidence"] for e in G.subgraph(nodes).edges),
+                    default=0.0
+                )
+            )
+        )
+
+    return identities
+```
+
+---
+
+### 5. Integrating with your existing resolver
+
+After your orchestrator gathers plugin results:
+
+```python
+async def resolve_identity(name=None, username=None, email=None, domain=None):
+    # 1. Run plugins, get raw candidates
+    raw_results = await run_plugins(name, username, email, domain)
+
+    # 2. Convert to Account objects
+    accounts = []
+    for r in raw_results:
+        accounts.append(Account(
+            source=r["source"],
+            username=r["username"],
+            profile_url=r.get("profile_url"),
+            display_name=r.get("display_name"),
+            bio=r.get("bio"),
+            location=r.get("location"),
+            email=r.get("email"),
+            extras=r.get("extra", {})
+        ))
+
+    # 3. Build identity graph
+    identities = build_identity_graph(accounts)
+
+    # 4. Sort by confidence
+    identities.sort(key=lambda x: x.confidence, reverse=True)
+    return identities
+```
+
+---
+
+### 6. Output shape for your UI
+
+What your front end can show:
+
+```json
+[
+  {
+    "identity_id": "id_1",
+    "confidence": 0.83,
+    "accounts": [
+      {
+        "source": "github",
+        "username": "bradgeiger",
+        "url": "https://github.com/bradgeiger"
+      },
+      {
+        "source": "twitter",
+        "username": "brad_geiger",
+        "url": "https://twitter.com/brad_geiger"
+      },
+      {
+        "source": "reddit",
+        "username": "bradgeiger",
+        "url": "https://www.reddit.com/user/bradgeiger"
+      }
+    ]
+  }
+]
+```
+
+Your HTML can render that as:
+
+- **Identity #1 — 0.83 confidence**  
+  - GitHub: `bradgeiger`  
+  - Twitter: `brad_geiger`  
+  - Reddit: `bradgeiger`  
+
+---
+
+If you want, next I can:
+
+- tighten the **similarity functions** (username, bio, location), or  
+- design a **visual graph view** (nodes = accounts, edges = confidence).
