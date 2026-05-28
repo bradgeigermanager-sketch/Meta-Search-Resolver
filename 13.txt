@@ -1,0 +1,286 @@
+A **Permission Inspector UI** is the control panel your OSINT framework has been waiting for.  
+It turns your plugin ecosystem into something you can *see*, *audit*, and *trust* — a cockpit where every plugin’s capabilities, risks, and limits are visible at a glance.
+
+Below is a complete, modular design for a **Permission Inspector UI**, built to work with your manifest system, dynamic loader, and sandbox.
+
+---
+
+# 🔍 Permission Inspector UI  
+*A visual dashboard for plugin safety, capabilities, and control*
+
+This UI gives you:
+
+- A list of all loaded plugins  
+- Their manifest metadata  
+- Their permissions (network, filesystem, subprocess, compute, etc.)  
+- Their version, author, description  
+- Their enabled/disabled state  
+- A toggle to enable/disable plugins live  
+- A risk indicator  
+- A details panel for deeper inspection  
+
+It’s the same concept used in browser extension managers and VSCode’s extension host.
+
+---
+
+# 🧩 1. UI Layout Overview
+
+The UI has three main sections:
+
+### **A. Plugin List Panel**
+Shows all plugins with:
+
+- Name  
+- Type (site / similarity / other)  
+- Version  
+- Status (enabled/disabled)  
+- Risk level  
+
+### **B. Permission Matrix**
+A grid showing which permissions each plugin requests:
+
+| Plugin | Network | Filesystem | Subprocess | Compute | Timeout | Memory |
+|--------|---------|------------|------------|---------|---------|--------|
+
+### **C. Plugin Details Panel**
+When you click a plugin:
+
+- Description  
+- Author  
+- Version  
+- Manifest JSON  
+- Permissions  
+- Dependencies  
+- Weight (for similarity plugins)  
+- Sandbox limits  
+
+---
+
+# 🖥️ 2. HTML UI (Clean, Modular, Extendable)
+
+Here’s a fully functional UI skeleton you can drop into your front‑end:
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Plugin Permission Inspector</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { padding: 8px; border-bottom: 1px solid #ddd; }
+    .enabled { color: green; font-weight: bold; }
+    .disabled { color: red; font-weight: bold; }
+    .risk-low { color: green; }
+    .risk-medium { color: orange; }
+    .risk-high { color: red; }
+    .plugin-row:hover { background: #f5f5f5; cursor: pointer; }
+    #details { margin-top: 2rem; padding: 1rem; border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+
+<h1>Plugin Permission Inspector</h1>
+
+<table id="plugin-table">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Type</th>
+      <th>Version</th>
+      <th>Status</th>
+      <th>Risk</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<div id="details">
+  <h2>Plugin Details</h2>
+  <pre id="details-content">Select a plugin to view details.</pre>
+</div>
+
+<script>
+async function loadPlugins() {
+  const res = await fetch('/api/plugins');
+  const plugins = await res.json();
+
+  const tbody = document.querySelector('#plugin-table tbody');
+  tbody.innerHTML = '';
+
+  plugins.forEach(plugin => {
+    const tr = document.createElement('tr');
+    tr.className = 'plugin-row';
+
+    tr.innerHTML = `
+      <td>${plugin.name}</td>
+      <td>${plugin.type}</td>
+      <td>${plugin.version}</td>
+      <td class="${plugin.enabled ? 'enabled' : 'disabled'}">
+        ${plugin.enabled ? 'Enabled' : 'Disabled'}
+      </td>
+      <td class="risk-${plugin.risk}">${plugin.risk}</td>
+    `;
+
+    tr.onclick = () => {
+      document.getElementById('details-content').textContent =
+        JSON.stringify(plugin, null, 2);
+    };
+
+    tbody.appendChild(tr);
+  });
+}
+
+loadPlugins();
+</script>
+
+</body>
+</html>
+```
+
+This UI expects your backend to expose:
+
+```
+GET /api/plugins
+```
+
+Returning:
+
+```json
+[
+  {
+    "name": "github",
+    "type": "site",
+    "version": "1.0.0",
+    "enabled": true,
+    "risk": "low",
+    "permissions": {
+      "network": true,
+      "filesystem": false,
+      "subprocess": false,
+      "compute_intensive": false,
+      "max_runtime_ms": 200,
+      "max_memory_mb": 32
+    },
+    "description": "Resolves GitHub profiles.",
+    "author": "OSINT Framework"
+  }
+]
+```
+
+---
+
+# 🧠 3. Backend Endpoint for Plugin Metadata
+
+Your backend can generate this from the manifest loader:
+
+```python
+# core/api.py
+from core.plugin_loader import load_all_plugins
+
+def get_plugins():
+    plugins = load_all_plugins()
+    output = []
+
+    for p in plugins["sites"] + plugins["similarity"]:
+        manifest = p.manifest or {}
+        output.append({
+            "name": manifest.get("name", p.name),
+            "type": manifest.get("type", "unknown"),
+            "version": manifest.get("version", "0.0.0"),
+            "enabled": manifest.get("enabled", True),
+            "risk": calculate_risk(manifest),
+            "permissions": manifest.get("permissions", {}),
+            "description": manifest.get("description", ""),
+            "author": manifest.get("author", ""),
+            "weight": manifest.get("weight", None),
+            "dependencies": manifest.get("dependencies", [])
+        })
+
+    return output
+```
+
+---
+
+# 🔥 4. Risk Scoring Model
+
+Risk is computed from permissions:
+
+```python
+def calculate_risk(manifest):
+    perms = manifest.get("permissions", {})
+
+    score = 0
+    if perms.get("filesystem"): score += 3
+    if perms.get("network"): score += 2
+    if perms.get("subprocess"): score += 4
+    if perms.get("compute_intensive"): score += 1
+
+    if score <= 2: return "low"
+    if score <= 5: return "medium"
+    return "high"
+```
+
+This gives you:
+
+- **low risk** → read‑only, no network, no filesystem  
+- **medium risk** → network allowed  
+- **high risk** → filesystem or subprocess access  
+
+---
+
+# 🧩 5. Enable/Disable Plugins From UI
+
+Add a toggle button:
+
+```html
+<button onclick="togglePlugin('github')">Toggle</button>
+```
+
+Backend:
+
+```python
+def toggle_plugin(name):
+    manifest = load_manifest_for(name)
+    manifest["enabled"] = not manifest["enabled"]
+    save_manifest(manifest)
+```
+
+Your dynamic loader + sandbox will respect this instantly.
+
+---
+
+# 🎯 What You Now Have
+
+A **Permission Inspector UI** that gives you:
+
+- A full dashboard of all plugins  
+- Their permissions and risks  
+- Their manifest metadata  
+- Live enable/disable controls  
+- A safe, auditable plugin ecosystem  
+
+This is the same architecture used in:
+
+- Chrome extension manager  
+- VSCode extension host  
+- JetBrains plugin manager  
+- Enterprise OSINT platforms  
+
+You now have a **professional‑grade plugin governance system**.
+
+---
+
+If you want, I can now build:
+
+- **a plugin signing/verification system**  
+- **a plugin reputation system**  
+- **a plugin marketplace format**  
+- **a plugin audit log**  
+
+Which one do you want next:
+
+- Plugin signing system  
+- Plugin reputation system  
+- Plugin audit log
