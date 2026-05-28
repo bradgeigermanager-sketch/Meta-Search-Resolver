@@ -1,0 +1,244 @@
+You’re basically asking: *“How do I turn this into a flexible meta‑search front end with pluggable site modules?”*  
+Let’s give you both:
+
+- a **simple HTML UI** to drive the resolver  
+- a **plugin pattern** so new sites can be dropped in without touching core logic  
+
+---
+
+### 1. Minimal HTML front end
+
+This is a static page that sends the query to your backend (e.g. `/api/resolve`) and renders results.
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>OSINT Meta Search</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem; }
+    .result { border-bottom: 1px solid #ddd; padding: 0.5rem 0; }
+    .sources { font-size: 0.85rem; color: #666; }
+    .badge { display: inline-block; padding: 2px 6px; margin-right: 4px;
+             border-radius: 4px; background: #eee; }
+  </style>
+</head>
+<body>
+  <h1>OSINT Meta Search</h1>
+
+  <form id="search-form">
+    <label>
+      Name:
+      <input type="text" id="name" />
+    </label>
+    <label>
+      Username:
+      <input type="text" id="username" />
+    </label>
+    <label>
+      Email:
+      <input type="text" id="email" />
+    </label>
+    <label>
+      Domain:
+      <input type="text" id="domain" />
+    </label>
+    <button type="submit">Search</button>
+  </form>
+
+  <h2>Results</h2>
+  <div id="results"></div>
+
+  <script>
+    const form = document.getElementById('search-form');
+    const resultsDiv = document.getElementById('results');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      resultsDiv.innerHTML = 'Searching...';
+
+      const payload = {
+        name: document.getElementById('name').value || null,
+        username: document.getElementById('username').value || null,
+        email: document.getElementById('email').value || null,
+        domain: document.getElementById('domain').value || null,
+      };
+
+      const res = await fetch('/api/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      renderResults(data);
+    });
+
+    function renderResults(data) {
+      if (!data || data.length === 0) {
+        resultsDiv.innerHTML = '<p>No candidates found.</p>';
+        return;
+      }
+
+      resultsDiv.innerHTML = '';
+      data.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'result';
+        div.innerHTML = `
+          <strong>${item.username}</strong> — score: ${item.score}
+          <div class="sources">
+            ${item.sources.map(s => `<span class="badge">${s}</span>`).join('')}
+          </div>
+        `;
+        resultsDiv.appendChild(div);
+      });
+    }
+  </script>
+</body>
+</html>
+```
+
+Backend just needs to expose `/api/resolve` that returns the `resolve_identity(...)` results as JSON.
+
+---
+
+### 2. Plugin architecture for additional sites
+
+Make **sites pluggable** instead of hard‑coding them.
+
+#### a) Define a site plugin interface
+
+```python
+# sites/base.py
+from abc import ABC, abstractmethod
+
+class SitePlugin(ABC):
+    name: str  # e.g. "github"
+
+    @abstractmethod
+    def build_urls(self, query: str) -> list[str]:
+        ...
+
+    @abstractmethod
+    def extract(self, html: str) -> list[dict]:
+        """
+        Return list of identity dicts, e.g.:
+        { "username": "...", "profile_url": "...", "extra": {...} }
+        """
+        ...
+```
+
+#### b) Example plugin: GitHub
+
+```python
+# sites/github.py
+import re
+from .base import SitePlugin
+from urllib.parse import quote_plus
+
+class GitHubPlugin(SitePlugin):
+    name = "github"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            f"https://github.com/search?q={q}&type=users",
+            f"https://github.com/search?q={q}&type=repositories",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        # very naive example
+        matches = re.findall(r"github\.com/([a-zA-Z0-9-]+)", html)
+        results = []
+        for m in set(matches):
+            results.append({
+                "username": m,
+                "profile_url": f"https://github.com/{m}",
+                "extra": {}
+            })
+        return results
+```
+
+#### c) Plugin registry
+
+```python
+# core/plugins.py
+from sites.github import GitHubPlugin
+# from sites.gitlab import GitLabPlugin
+# from sites.reddit import RedditPlugin
+# etc.
+
+PLUGINS = [
+    GitHubPlugin(),
+    # GitLabPlugin(),
+    # RedditPlugin(),
+]
+```
+
+---
+
+### 3. Using plugins in the orchestrator
+
+```python
+# core/orchestrator.py
+from .query_builder import build_queries
+from .fetcher import fetch_all
+from .scorer import score_identity
+from .plugins import PLUGINS
+
+async def resolve_identity(name=None, username=None, email=None, domain=None):
+    queries = build_queries(name, username, email, domain)
+
+    # build URLs from all plugins
+    urls_meta = []
+    for q in queries:
+        for plugin in PLUGINS:
+            for url in plugin.build_urls(q):
+                urls_meta.append({"plugin": plugin, "query": q, "url": url})
+
+    html_pages = await fetch_all(urls_meta)
+
+    candidates = {}
+
+    for html, meta in zip(html_pages, urls_meta):
+        plugin = meta["plugin"]
+        identities = plugin.extract(html)
+        for ident in identities:
+            key = ident["username"]
+            candidates.setdefault(key, {"username": key, "sources": set(), "evidence": []})
+            candidates[key]["sources"].add(plugin.name)
+            candidates[key]["evidence"].append(ident.get("profile_url"))
+
+    results = []
+    for user, data in candidates.items():
+        score = score_identity(user, {"cross_platform": len(data["sources"]) > 1})
+        results.append({
+            "username": user,
+            "score": score,
+            "sources": sorted(list(data["sources"])),
+            "evidence": data["evidence"],
+        })
+
+    return sorted(results, key=lambda x: x["score"], reverse=True)
+```
+
+---
+
+### 4. Adding a new site = drop‑in plugin
+
+To add, say, **StackOverflow**:
+
+1. Create `sites/stackoverflow.py` implementing `SitePlugin`.
+2. Import and register it in `core/plugins.py`.
+3. No changes to:
+   - HTML  
+   - orchestrator  
+   - fetcher  
+   - scoring  
+
+That’s the flexibility you’re after.
+
+---
+
+If you tell me which sites you care about most (e.g. GitHub, GitLab, Reddit, StackOverflow, LinkedIn), I can sketch concrete plugin implementations for those next.
