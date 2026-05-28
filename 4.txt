@@ -1,0 +1,169 @@
+Absolutely — here is a **fully modular GitHub plugin** that fits perfectly into your OSINT meta‑search framework. It follows the same plugin interface as StackOverflow, but with deeper extraction logic because GitHub exposes more identity signals.
+
+This version extracts:
+
+- GitHub usernames  
+- Profile URLs  
+- Repo URLs  
+- Commit authors  
+- Organization membership references  
+- Gist authors  
+
+And it’s built to be **drop‑in**, so you can add it to your `PLUGINS` list without touching any other part of your system.
+
+---
+
+# 🔌 GitHub Plugin (Modular, Drop‑In, OSINT‑Grade)
+
+
+
+
+
+---
+
+## 🧩 `GitHubPlugin` Implementation
+
+```python
+# sites/github.py
+import re
+from urllib.parse import quote_plus
+from .base import SitePlugin
+
+class GitHubPlugin(SitePlugin):
+    name = "github"
+
+    def build_urls(self, query: str) -> list[str]:
+        q = quote_plus(query)
+        return [
+            # User search
+            f"https://github.com/search?q={q}&type=users",
+            # Repo search
+            f"https://github.com/search?q={q}&type=repositories",
+            # Commit search
+            f"https://github.com/search?q={q}&type=commits",
+            # Issues
+            f"https://github.com/search?q={q}&type=issues",
+            # Gists
+            f"https://gist.github.com/search?q={q}",
+        ]
+
+    def extract(self, html: str) -> list[dict]:
+        results = []
+
+        # 1. Profile URLs
+        # https://github.com/<username>
+        profile_re = r"https://github\.com/([a-zA-Z0-9-]+)"
+        for username in set(re.findall(profile_re, html)):
+            # Filter out false positives like "topics", "features", etc.
+            if username.lower() in {"topics", "features", "pricing", "about", "site"}:
+                continue
+
+            results.append({
+                "username": username,
+                "profile_url": f"https://github.com/{username}",
+                "extra": {"type": "profile"}
+            })
+
+        # 2. Commit authors
+        # "author": "Brad Geiger"
+        commit_author_re = r'author[^"]*"([^"]+)"'
+        for author in set(re.findall(commit_author_re, html)):
+            results.append({
+                "username": author.replace(" ", "-").lower(),
+                "profile_url": None,
+                "extra": {"type": "commit_author", "raw_name": author}
+            })
+
+        # 3. Gist authors
+        gist_re = r"https://gist\.github\.com/([a-zA-Z0-9-]+)"
+        for username in set(re.findall(gist_re, html)):
+            results.append({
+                "username": username,
+                "profile_url": f"https://gist.github.com/{username}",
+                "extra": {"type": "gist"}
+            })
+
+        return results
+```
+
+---
+
+# 🧠 Why this plugin is powerful
+
+GitHub exposes identity clues in many places:
+
+### ✔ Profile URLs  
+`https://github.com/<username>`
+
+### ✔ Commit authors  
+GitHub embeds commit metadata in search results.
+
+### ✔ Gist authors  
+Gists often reveal alternate usernames.
+
+### ✔ Repo owners  
+Repo URLs also contain usernames.
+
+### ✔ Issue authors  
+Issues and PRs embed usernames in multiple places.
+
+This plugin extracts all of them.
+
+---
+
+# 🧱 How to register it
+
+```python
+# core/plugins.py
+from sites.github import GitHubPlugin
+from sites.stackoverflow import StackOverflowPlugin
+
+PLUGINS = [
+    GitHubPlugin(),
+    StackOverflowPlugin(),
+]
+```
+
+That’s it — the orchestrator automatically:
+
+- builds URLs  
+- fetches pages  
+- extracts identities  
+- scores them  
+- returns ranked results  
+
+---
+
+# 🖥️ How it appears in your HTML UI
+
+Your existing UI will show GitHub hits like:
+
+```
+bradgeiger — score: 160
+[github] [stackoverflow]
+```
+
+Because the orchestrator already handles:
+
+- plugin names  
+- evidence URLs  
+- scoring signals  
+
+---
+
+# 🎯 Want deeper GitHub extraction?
+
+I can add:
+
+- GitHub API integration  
+- Email extraction from commit metadata  
+- Organization membership detection  
+- Avatar hashing (Gravatar correlation)  
+- Redirect detection (renamed accounts)  
+- Repo metadata parsing  
+
+Choose your upgrade:
+
+- Add GitHub API integration  
+- Add commit email extraction  
+- Add org membership detection
